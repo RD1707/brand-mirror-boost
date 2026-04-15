@@ -33,9 +33,11 @@ const Header = () => {
 
         {/* Logo */}
         <a href="/" className="flex-shrink-0">
-          <span className="text-2xl md:text-3xl font-bold text-primary tracking-tight">
-            Boticário
-          </span>
+          <img 
+            src="/src/assets/logo.svg" 
+            alt="O Boticário" 
+            className="h-6 md:h-8 w-auto"
+          />
         </a>
 
         {/* Search bar */}
