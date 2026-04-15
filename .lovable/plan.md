@@ -1,59 +1,87 @@
 
 
-# Boticário-Style Static Landing Page
+# Plano: Fonte correta + Imagens/textos reais + Páginas internas completas
 
-## Overview
-Build a static marketing landing page in React replicating the layout and structure of boticario.com.br, using their actual content, images, and branding. No Shopify or e-commerce functionality — purely a visual landing page.
+## 1. Fonte do Boticário
+O site boticario.com.br usa **"Boticario Sans"** (fonte proprietária) com fallback para **"Noto Sans", sans-serif**. Como a fonte proprietária não é pública, usaremos **"Noto Sans"** do Google Fonts (visualmente muito próxima). Trocar a atual "Lato" por "Noto Sans" em `index.css`.
 
-## Sections to Build (based on site analysis)
+## 2. Imagens e textos reais do Boticário
+Atualizar `src/data/products.ts`, `banners.ts`, `categories.ts` com:
+- Imagens reais dos produtos via CDN do Boticário (ex: `https://res.cloudinary.com/beleza-na-web/image/upload/...` ou URLs do próprio site)
+- Nomes, preços e descrições reais dos produtos
+- Expandir o `Product` interface com campos: `description`, `rating`, `reviewCount`, `images[]`, `category`, `slug`
 
-1. **Top Bar** — Promotional banner (e.g., "Frete grátis acima de R$149")
-2. **Header/Navbar** — Logo, search bar, account/cart icons, category navigation
-3. **Hero Carousel** — Full-width promotional banners with auto-play
-4. **Category Cards** — Horizontal scrollable category tiles (Perfumaria, Maquiagem, Cabelos, etc.)
-5. **Product Showcase Grid** — Featured products with image, name, price, and discount badges
-6. **Promotional Banners** — Mid-page full-width offer banners
-7. **Brand Highlights** — Sections for specific lines (e.g., Nativa SPA, Lily, Egeo)
-8. **Benefits Bar** — Icons for free shipping, secure payment, easy returns
-9. **Newsletter Signup** — Email capture section
-10. **Footer** — Links, social media, legal info, payment icons
+## 3. Novas Páginas a Criar
 
-## Technical Approach
+### 3.1 Página de Produto (`/produto/:slug`)
+- Galeria de imagens com thumbnails
+- Nome, linha, avaliações com estrelas
+- Preço (original riscado + atual), parcelamento
+- Seletor de quantidade
+- Botões "Adicionar à sacola" e "Comprar agora"
+- Descrição, ingredientes, modo de uso em abas/accordion
+- Seção "Produtos relacionados"
 
-- **Component structure**: One component per section, all composed in `Index.tsx`
-- **Images**: Reference actual Boticário CDN URLs for product/banner images
-- **Styling**: Tailwind CSS with Boticário's color palette (green #006B3F, pink accents, white backgrounds)
-- **Carousel**: Use existing Embla-based carousel component
-- **Responsive**: Mobile-first, matching their breakpoints
-- **Data**: Static arrays for products/categories defined in a `data/` folder
+### 3.2 Carrinho (`/carrinho`)
+- Lista de itens com imagem, nome, preço, quantidade editável
+- Botão remover item
+- Resumo: subtotal, frete, total
+- Campo de CEP para calcular frete
+- Campo de cupom de desconto
+- Botão "Finalizar compra"
 
-## File Structure
-```
-src/
-  data/
-    products.ts        — Product listings with images, prices
-    categories.ts      — Category data
-    banners.ts         — Banner/hero slide data
-  components/
-    TopBar.tsx
-    Header.tsx
-    HeroCarousel.tsx
-    CategoryCards.tsx
-    ProductGrid.tsx
-    PromoBanner.tsx
-    BrandHighlights.tsx
-    BenefitsBar.tsx
-    Newsletter.tsx
-    Footer.tsx
-  pages/
-    Index.tsx           — Composes all sections
-  index.css             — Updated with Boticário brand colors
-```
+### 3.3 Checkout (`/checkout`)
+- Steps: Identificação → Endereço → Pagamento → Confirmação
+- Formulário de dados pessoais (nome, CPF, telefone)
+- Formulário de endereço (CEP, rua, número, bairro, cidade, estado)
+- Seleção de forma de pagamento (cartão, Pix, boleto)
+- Resumo do pedido lateral
+- Botão "Finalizar pedido"
 
-## Brand Colors (CSS variables)
-- Primary green: `#006B3F`
-- Accent pink: `#E91E63`
-- Background: `#FFFFFF`
-- Text: `#333333`
-- Light gray: `#F5F5F5`
+### 3.4 Login/Cadastro (`/login`)
+- Abas "Entrar" e "Criar conta"
+- Login: email + senha + "Esqueci minha senha"
+- Cadastro: nome, email, CPF, telefone, senha
+- Estética com fundo verde Boticário
+
+### 3.5 Minha Conta (`/minha-conta`)
+- Menu lateral: Meus Dados, Pedidos, Endereços, Favoritos
+- Listagem de pedidos com status
+- Edição de dados pessoais
+
+## 4. Carrinho Global (Context API)
+- `CartContext` com `addItem`, `removeItem`, `updateQuantity`, `clearCart`
+- Badge no ícone da sacola no Header mostrando quantidade
+- Persistência em `localStorage`
+
+## 5. Layout compartilhado
+- Criar `Layout.tsx` com TopBar + Header + children + Footer
+- Usar em todas as páginas para consistência
+
+## 6. Arquivos a criar/editar
+
+| Ação | Arquivo |
+|------|---------|
+| Editar | `src/index.css` — Noto Sans |
+| Editar | `src/data/products.ts` — dados reais, campos extras, slug |
+| Editar | `src/data/banners.ts` — imagens e textos reais |
+| Editar | `src/data/categories.ts` — imagens reais |
+| Criar | `src/contexts/CartContext.tsx` |
+| Criar | `src/components/Layout.tsx` |
+| Criar | `src/pages/ProductDetail.tsx` |
+| Criar | `src/pages/Cart.tsx` |
+| Criar | `src/pages/Checkout.tsx` |
+| Criar | `src/pages/Login.tsx` |
+| Criar | `src/pages/MyAccount.tsx` |
+| Editar | `src/App.tsx` — rotas novas |
+| Editar | `src/components/Header.tsx` — links para /login, /carrinho com badge |
+| Editar | `src/components/ProductGrid.tsx` — link para /produto/:slug |
+| Editar | `src/components/BrandHighlights.tsx` — link para /produto/:slug |
+
+## Detalhes Técnicos
+- Todas as páginas são estáticas (sem backend), dados mockados
+- Checkout simula finalização com toast de confirmação
+- Login é visual apenas (sem autenticação real)
+- Carrinho funciona com Context API + localStorage
+- Navegação via `react-router-dom` `Link` e `useNavigate`
 
