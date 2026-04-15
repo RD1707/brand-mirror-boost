@@ -13,9 +13,11 @@ const Footer = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
-            <span className="text-2xl font-bold text-background mb-4 block">
-              Boticário
-            </span>
+            <img 
+              src="/src/assets/logo.svg" 
+              alt="O Boticário" 
+              className="h-8 w-auto mb-4 brightness-0 invert"
+            />
             <p className="text-sm opacity-70 mb-4">
               Beleza que transforma há mais de 45 anos.
             </p>
