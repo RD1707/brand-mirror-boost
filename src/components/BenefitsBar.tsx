@@ -25,7 +25,7 @@ const benefits = [
 
 const BenefitsBar = () => {
   return (
-    <section className="py-8 md:py-10 bg-muted/50 border-y border-border">
+    <section className="py-8 md:py-10 border-y border-border">
       <div className="container mx-auto px-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           {benefits.map((benefit) => (
@@ -34,7 +34,7 @@ const BenefitsBar = () => {
               className="flex flex-col items-center text-center gap-2"
             >
               <benefit.icon className="h-7 w-7 text-primary" />
-              <h3 className="text-sm font-semibold text-foreground">
+              <h3 className="text-sm font-bold text-foreground">
                 {benefit.title}
               </h3>
               <p className="text-xs text-muted-foreground">

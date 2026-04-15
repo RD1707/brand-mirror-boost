@@ -37,11 +37,11 @@ const Newsletter = () => {
             placeholder="Seu melhor e-mail"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="flex-1 rounded-full bg-white/10 border-white/20 text-white placeholder:text-white/60 focus-visible:ring-white/40"
+            className="flex-1 rounded-lg bg-white/10 border-white/20 text-white placeholder:text-white/60 focus-visible:ring-white/40"
           />
           <Button
             type="submit"
-            className="rounded-full bg-secondary hover:bg-secondary/90 text-secondary-foreground font-semibold px-8"
+            className="rounded-lg bg-[hsl(38,60%,50%)] hover:bg-[hsl(38,60%,45%)] text-white font-bold px-8"
           >
             Cadastrar
           </Button>
