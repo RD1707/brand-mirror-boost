@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CreditCard, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
@@ -9,29 +9,74 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 
-type Step = "identificacao" | "endereco" | "pagamento";
+// Imports oficiais da Stripe
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 
+// Carrega a chave do .env
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || "pk_test_sua_chave_aqui");
+
+type Step = "identificacao" | "endereco" | "pagamento";
 const steps: { key: Step; label: string }[] = [
   { key: "identificacao", label: "Identificação" },
   { key: "endereco", label: "Endereço" },
   { key: "pagamento", label: "Pagamento" },
 ];
 
+// --- Sub-componente: O Formulário do Cartão ---
+const StripePaymentForm = ({ orderId }: { orderId: string }) => {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const { clearCart } = useCart();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+
+    setIsProcessing(true);
+    setErrorMessage("");
+
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/checkout/success?order_id=${orderId}`,
+      },
+    });
+
+    if (error) {
+      setErrorMessage(error.message || "Ocorreu um erro no pagamento.");
+      setIsProcessing(false);
+    } else {
+      clearCart();
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <PaymentElement />
+      {errorMessage && <div className="text-red-500 text-sm font-medium">{errorMessage}</div>}
+      <Button disabled={!stripe || isProcessing} className="w-full rounded-lg text-lg h-12">
+        {isProcessing ? "Processando..." : "Confirmar Pagamento"}
+      </Button>
+    </form>
+  );
+};
+// ----------------------------------------------
+
 const Checkout = () => {
   const [currentStep, setCurrentStep] = useState<Step>("identificacao");
   const [loading, setLoading] = useState(false);
-  const { items, subtotal, clearCart } = useCart();
+  const { items, subtotal } = useCart();
   const { user } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate();
 
-  // Identificação
   const [name, setName] = useState("");
   const [email, setEmail] = useState(user?.email ?? "");
   const [phone, setPhone] = useState("");
   const [cpf, setCpf] = useState("");
 
-  // Endereço
   const [cep, setCep] = useState("");
   const [street, setStreet] = useState("");
   const [number, setNumber] = useState("");
@@ -40,77 +85,47 @@ const Checkout = () => {
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
 
+  // O segredo do pagamento gerado pelo backend
+  const [clientSecret, setClientSecret] = useState("");
+  const [orderId, setOrderId] = useState("");
+
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
-  const handleFinalize = async () => {
-    if (items.length === 0) {
-      toast({ title: "Carrinho vazio", variant: "destructive" });
-      return;
-    }
+  const preparePayment = async () => {
+    if (items.length === 0) return toast({ title: "Carrinho vazio", variant: "destructive" });
     setLoading(true);
 
-    // 1) Cria o pedido como 'pending' no banco
-    const { data: order, error: orderErr } = await supabase
-      .from("orders")
-      .insert({
-        user_id: user?.id ?? null,
-        status: "pending",
-        buyer_name: name,
-        buyer_email: email,
-        buyer_phone: phone,
-        buyer_cpf: cpf,
-        shipping_address: { cep, street, number, complement, neighborhood, city, state },
-        subtotal,
-        shipping: 0,
-        total: subtotal,
-      })
-      .select()
-      .single();
+    const { data: order, error: orderErr } = await supabase.from("orders").insert({
+      user_id: user?.id ?? null, status: "pending", buyer_name: name, buyer_email: email,
+      buyer_phone: phone, buyer_cpf: cpf, shipping_address: { cep, street, number, complement, neighborhood, city, state },
+      subtotal, shipping: 0, total: subtotal,
+    }).select().single();
 
     if (orderErr || !order) {
       setLoading(false);
-      toast({ title: "Erro ao criar pedido", description: orderErr?.message, variant: "destructive" });
-      return;
+      return toast({ title: "Erro ao criar pedido", variant: "destructive" });
     }
 
-    // 2) Insere os itens do pedido
-    const { error: itemsErr } = await supabase.from("order_items").insert(
-      items.map((it) => ({
-        order_id: order.id,
-        product_id: it.product.id,
-        product_name: it.product.name,
-        product_image: it.product.image_url,
-        unit_price: it.product.price,
-        quantity: it.quantity,
-      }))
-    );
+    await supabase.from("order_items").insert(items.map((it) => ({
+      order_id: order.id, product_id: it.product.id, product_name: it.product.name,
+      product_image: it.product.image_url, unit_price: it.product.price, quantity: it.quantity,
+    })));
 
-    if (itemsErr) {
-      setLoading(false);
-      toast({ title: "Erro ao salvar itens", description: itemsErr.message, variant: "destructive" });
-      return;
-    }
-
-    // 3) Chama edge function para criar Stripe Checkout Session
-    const { data: checkout, error: fnErr } = await supabase.functions.invoke("create-checkout", {
+    // Chama a Edge Function para buscar o Client Secret
+    const { data: intentData, error: fnErr } = await supabase.functions.invoke("create-checkout", {
       body: { order_id: order.id },
     });
 
     setLoading(false);
 
-    if (fnErr || !checkout?.url) {
-      toast({
-        title: "Stripe não configurado ainda",
-        description: "Pedido salvo no banco. Configure as edge functions e a STRIPE_SECRET_KEY para concluir.",
-      });
-      clearCart();
-      navigate("/minha-conta");
-      return;
+    if (fnErr || !intentData?.clientSecret) {
+      return toast({ title: "Erro na conexão segura", variant: "destructive" });
     }
 
-    clearCart();
-    window.location.href = checkout.url;
+    setClientSecret(intentData.clientSecret);
+    setOrderId(order.id);
+    setCurrentStep("pagamento");
   };
 
   return (
@@ -134,10 +149,10 @@ const Checkout = () => {
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <h2 className="text-lg font-bold">Dados pessoais</h2>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <div><label className="text-sm text-muted-foreground block mb-1">Nome completo</label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">E-mail</label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@exemplo.com" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">CPF</label><Input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="000.000.000-00" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Telefone</label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(00) 00000-0000" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Nome completo</label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">E-mail</label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">CPF</label><Input value={cpf} onChange={(e) => setCpf(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Telefone</label><Input value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
                 </div>
                 <Button onClick={() => setCurrentStep("endereco")} disabled={!name || !email} className="w-full rounded-lg">Continuar</Button>
               </div>
@@ -147,49 +162,38 @@ const Checkout = () => {
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <h2 className="text-lg font-bold">Endereço de entrega</h2>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <div><label className="text-sm text-muted-foreground block mb-1">CEP</label><Input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="00000-000" /></div>
-                  <div className="sm:col-span-2"><label className="text-sm text-muted-foreground block mb-1">Rua</label><Input value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Nome da rua" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Número</label><Input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="123" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Complemento</label><Input value={complement} onChange={(e) => setComplement(e.target.value)} placeholder="Apto, bloco..." /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Bairro</label><Input value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} placeholder="Bairro" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Cidade</label><Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Cidade" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Estado</label><Input value={state} onChange={(e) => setState(e.target.value)} placeholder="UF" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">CEP</label><Input value={cep} onChange={(e) => setCep(e.target.value)} /></div>
+                  <div className="sm:col-span-2"><label className="text-sm text-muted-foreground block mb-1">Rua</label><Input value={street} onChange={(e) => setStreet(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Número</label><Input value={number} onChange={(e) => setNumber(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Complemento</label><Input value={complement} onChange={(e) => setComplement(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Bairro</label><Input value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Cidade</label><Input value={city} onChange={(e) => setCity(e.target.value)} /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Estado</label><Input value={state} onChange={(e) => setState(e.target.value)} /></div>
                 </div>
                 <div className="flex gap-3">
                   <Button variant="outline" onClick={() => setCurrentStep("identificacao")} className="flex-1 rounded-lg">Voltar</Button>
-                  <Button onClick={() => setCurrentStep("pagamento")} disabled={!cep || !street || !number || !city} className="flex-1 rounded-lg">Continuar</Button>
+                  <Button onClick={preparePayment} disabled={!cep || !street || !number || !city || loading} className="flex-1 rounded-lg">
+                    {loading ? "Processando..." : "Ir para Pagamento"}
+                  </Button>
                 </div>
               </div>
             )}
 
-            {currentStep === "pagamento" && (
-              <div className="bg-card border border-border rounded-lg p-6 space-y-4">
-                <h2 className="text-lg font-bold">Pagamento</h2>
-                <div className="border border-primary bg-primary/5 rounded-lg p-4 flex items-start gap-3">
-                  <CreditCard className="h-5 w-5 text-primary mt-0.5" />
-                  <div className="text-sm">
-                    <p className="font-medium mb-1">Pagamento seguro com Stripe</p>
-                    <p className="text-muted-foreground text-xs">
-                      Você será redirecionado para a página segura da Stripe para inserir os dados do cartão. Por motivos de segurança e
-                      conformidade PCI-DSS, nunca armazenamos o número completo do seu cartão. Apenas os últimos 4 dígitos e a bandeira
-                      ficam registrados após o pagamento.
-                    </p>
-                  </div>
+            {currentStep === "pagamento" && clientSecret && (
+              <div className="bg-card border border-border rounded-lg p-6 space-y-6 shadow-sm">
+                <div>
+                  <h2 className="text-lg font-bold mb-1">Pagamento Seguro</h2>
+                  <p className="text-sm text-muted-foreground">Insira os dados do cartão. O processamento é criptografado pela Stripe.</p>
                 </div>
 
-                <div className="text-sm bg-muted/50 rounded-lg p-4">
-                  <p className="font-medium mb-2">Resumo da compra</p>
-                  <p className="text-muted-foreground">Comprador: {name}</p>
-                  <p className="text-muted-foreground">E-mail: {email}</p>
-                  <p className="text-muted-foreground">Entrega: {street}, {number} - {city}/{state}</p>
+                {/* Aqui entra a magia do Stripe Elements! */}
+                <div className="border border-border rounded-lg p-4 bg-background">
+                  <Elements stripe={stripePromise} options={{ clientSecret }}>
+                    <StripePaymentForm orderId={orderId} />
+                  </Elements>
                 </div>
 
-                <div className="flex gap-3">
-                  <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="flex-1 rounded-lg">Voltar</Button>
-                  <Button onClick={handleFinalize} disabled={loading} className="flex-1 rounded-lg">
-                    {loading ? "Processando..." : "Pagar com Stripe"}
-                  </Button>
-                </div>
+                <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="w-full rounded-lg">Voltar</Button>
               </div>
             )}
           </div>
