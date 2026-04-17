@@ -4,35 +4,52 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CartProvider } from "@/contexts/CartContext";
+import { AuthProvider } from "@/hooks/useAuth";
 import Index from "./pages/Index.tsx";
 import ProductDetail from "./pages/ProductDetail.tsx";
 import Cart from "./pages/Cart.tsx";
 import Checkout from "./pages/Checkout.tsx";
+import CheckoutSuccess from "./pages/CheckoutSuccess.tsx";
+import CheckoutCancel from "./pages/CheckoutCancel.tsx";
 import Login from "./pages/Login.tsx";
 import MyAccount from "./pages/MyAccount.tsx";
 import NotFound from "./pages/NotFound.tsx";
+import AdminLayout from "./components/admin/AdminLayout.tsx";
+import AdminDashboard from "./pages/admin/AdminDashboard.tsx";
+import AdminProducts from "./pages/admin/AdminProducts.tsx";
+import AdminOrders from "./pages/admin/AdminOrders.tsx";
+import AdminCategories from "./pages/admin/AdminCategories.tsx";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <CartProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/produto/:slug" element={<ProductDetail />} />
-            <Route path="/carrinho" element={<Cart />} />
-            <Route path="/checkout" element={<Checkout />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/minha-conta" element={<MyAccount />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </CartProvider>
+      <BrowserRouter>
+        <AuthProvider>
+          <CartProvider>
+            <Toaster />
+            <Sonner />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/produto/:slug" element={<ProductDetail />} />
+              <Route path="/carrinho" element={<Cart />} />
+              <Route path="/checkout" element={<Checkout />} />
+              <Route path="/checkout/success" element={<CheckoutSuccess />} />
+              <Route path="/checkout/cancel" element={<CheckoutCancel />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/minha-conta" element={<MyAccount />} />
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="produtos" element={<AdminProducts />} />
+                <Route path="pedidos" element={<AdminOrders />} />
+                <Route path="categorias" element={<AdminCategories />} />
+              </Route>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </CartProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );

@@ -1,16 +1,24 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import type { Product } from "@/data/products";
+
+export interface CartProduct {
+  id: string;
+  name: string;
+  slug: string;
+  price: number;
+  image_url: string | null;
+  line?: string | null;
+}
 
 export interface CartItem {
-  product: Product;
+  product: CartProduct;
   quantity: number;
 }
 
 interface CartContextType {
   items: CartItem[];
-  addItem: (product: Product, quantity?: number) => void;
-  removeItem: (productId: number) => void;
-  updateQuantity: (productId: number, quantity: number) => void;
+  addItem: (product: CartProduct, quantity?: number) => void;
+  removeItem: (productId: string) => void;
+  updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
   totalItems: number;
   subtotal: number;
@@ -32,33 +40,29 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem("cart", JSON.stringify(items));
   }, [items]);
 
-  const addItem = (product: Product, quantity = 1) => {
+  const addItem = (product: CartProduct, quantity = 1) => {
     setItems((prev) => {
       const existing = prev.find((i) => i.product.id === product.id);
       if (existing) {
         return prev.map((i) =>
-          i.product.id === product.id
-            ? { ...i, quantity: i.quantity + quantity }
-            : i
+          i.product.id === product.id ? { ...i, quantity: i.quantity + quantity } : i
         );
       }
       return [...prev, { product, quantity }];
     });
   };
 
-  const removeItem = (productId: number) => {
+  const removeItem = (productId: string) => {
     setItems((prev) => prev.filter((i) => i.product.id !== productId));
   };
 
-  const updateQuantity = (productId: number, quantity: number) => {
+  const updateQuantity = (productId: string, quantity: number) => {
     if (quantity <= 0) {
       removeItem(productId);
       return;
     }
     setItems((prev) =>
-      prev.map((i) =>
-        i.product.id === productId ? { ...i, quantity } : i
-      )
+      prev.map((i) => (i.product.id === productId ? { ...i, quantity } : i))
     );
   };
 

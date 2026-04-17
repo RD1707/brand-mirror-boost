@@ -1,21 +1,62 @@
 import { useParams, Link } from "react-router-dom";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Heart, ShoppingBag, Star, Minus, Plus, ChevronRight, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { allProducts, featuredProducts } from "@/data/products";
 import { useCart } from "@/contexts/CartContext";
 import Layout from "@/components/Layout";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import type { Product } from "@/integrations/supabase/db-types";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const ProductDetail = () => {
   const { slug } = useParams();
-  const product = allProducts.find((p) => p.slug === slug);
   const { addItem } = useCart();
   const { toast } = useToast();
   const [quantity, setQuantity] = useState(1);
   const [selectedImage, setSelectedImage] = useState(0);
   const [activeTab, setActiveTab] = useState<"descricao" | "ingredientes" | "modo-uso">("descricao");
+
+  const { data: product, isLoading } = useQuery({
+    queryKey: ["product", slug],
+    enabled: !!slug,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("products").select("*").eq("slug", slug!).maybeSingle();
+      if (error) throw error;
+      return data as Product | null;
+    },
+  });
+
+  const { data: related } = useQuery({
+    queryKey: ["product-related", product?.id],
+    enabled: !!product,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("products")
+        .select("*")
+        .eq("active", true)
+        .neq("id", product!.id)
+        .limit(4);
+      return (data ?? []) as Product[];
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="container mx-auto px-4 py-8 grid md:grid-cols-2 gap-8">
+          <Skeleton className="aspect-square w-full rounded-lg" />
+          <div className="space-y-4">
+            <Skeleton className="h-8 w-3/4" />
+            <Skeleton className="h-6 w-1/2" />
+            <Skeleton className="h-12 w-full" />
+          </div>
+        </div>
+      </Layout>
+    );
+  }
 
   if (!product) {
     return (
@@ -28,32 +69,33 @@ const ProductDetail = () => {
     );
   }
 
-  const images = product.images || [product.image];
+  const images = product.images && product.images.length > 0 ? product.images : [product.image_url ?? "/placeholder.svg"];
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   const handleAddToCart = () => {
-    addItem(product, quantity);
+    addItem({
+      id: product.id,
+      name: product.name,
+      slug: product.slug,
+      price: Number(product.price),
+      image_url: product.image_url,
+      line: product.line,
+    }, quantity);
     toast({ title: "Produto adicionado!", description: `${product.name} foi adicionado à sua sacola.` });
   };
 
-  const related = featuredProducts.filter((p) => p.id !== product.id).slice(0, 4);
-
   return (
     <Layout>
-      {/* Breadcrumb */}
       <div className="bg-muted/50 border-b border-border">
         <div className="container mx-auto px-4 py-3 text-xs text-muted-foreground flex items-center gap-1">
           <Link to="/" className="hover:text-primary">Início</Link>
           <ChevronRight className="h-3 w-3" />
-          <span>{product.category}</span>
-          <ChevronRight className="h-3 w-3" />
-          <span className="text-foreground">{product.line}</span>
+          <span className="text-foreground">{product.line ?? product.name}</span>
         </div>
       </div>
 
       <div className="container mx-auto px-4 py-8">
         <div className="grid md:grid-cols-2 gap-8 lg:gap-12">
-          {/* Gallery */}
           <div>
             <div className="relative rounded-lg overflow-hidden border border-border mb-3">
               <img src={images[selectedImage]} alt={product.name} className="w-full aspect-square object-cover" />
@@ -81,39 +123,34 @@ const ProductDetail = () => {
             )}
           </div>
 
-          {/* Info */}
           <div>
-            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-1">{product.line}</p>
+            {product.line && (
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-1">{product.line}</p>
+            )}
             <h1 className="text-xl md:text-2xl font-bold text-foreground mb-3">{product.name}</h1>
 
-            {/* Rating */}
             <div className="flex items-center gap-2 mb-4">
               <div className="flex gap-0.5">
                 {[...Array(5)].map((_, i) => (
                   <Star
                     key={i}
-                    className={`h-4 w-4 ${i < Math.round(product.rating) ? "fill-accent text-accent" : "fill-muted text-muted"}`}
+                    className={`h-4 w-4 ${i < Math.round(Number(product.rating)) ? "fill-accent text-accent" : "fill-muted text-muted"}`}
                   />
                 ))}
               </div>
-              <span className="text-sm text-muted-foreground">({product.reviewCount} avaliações)</span>
+              <span className="text-sm text-muted-foreground">({product.review_count} avaliações)</span>
             </div>
 
-            {/* Price */}
             <div className="mb-6">
-              {product.originalPrice && (
+              {product.original_price && (
                 <span className="text-sm text-muted-foreground line-through block">
-                  {formatPrice(product.originalPrice)}
+                  {formatPrice(Number(product.original_price))}
                 </span>
               )}
-              <span className="text-3xl font-bold text-primary">{formatPrice(product.price)}</span>
+              <span className="text-3xl font-bold text-primary">{formatPrice(Number(product.price))}</span>
               <span className="text-sm text-muted-foreground ml-2">à vista</span>
-              {product.installments && (
-                <p className="text-sm text-muted-foreground mt-1">ou {product.installments} sem juros</p>
-              )}
             </div>
 
-            {/* Quantity + Add to cart */}
             <div className="flex items-center gap-3 mb-4">
               <div className="flex items-center border border-border rounded-lg">
                 <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="p-2 hover:bg-muted">
@@ -132,11 +169,10 @@ const ProductDetail = () => {
 
             <Link to="/carrinho">
               <Button variant="outline" className="w-full rounded-lg mb-6" size="lg">
-                Comprar agora
+                Ir para o carrinho
               </Button>
             </Link>
 
-            {/* Shipping */}
             <div className="border border-border rounded-lg p-4 mb-6">
               <div className="flex items-center gap-2 mb-2">
                 <Truck className="h-4 w-4 text-primary" />
@@ -148,7 +184,6 @@ const ProductDetail = () => {
               </div>
             </div>
 
-            {/* Tabs */}
             <div className="border-t border-border pt-6">
               <div className="flex gap-6 border-b border-border mb-4">
                 {([
@@ -166,30 +201,25 @@ const ProductDetail = () => {
                 ))}
               </div>
               <div className="text-sm text-foreground/80 leading-relaxed">
-                {activeTab === "descricao" && <p>{product.description}</p>}
-                {activeTab === "ingredientes" && (
-                  <p>Aqua, Alcohol Denat., Parfum, Limonene, Linalool, Citronellol, Geraniol, Coumarin, Alpha-Isomethyl Ionone, Benzyl Benzoate.</p>
-                )}
-                {activeTab === "modo-uso" && (
-                  <p>Aplique nas áreas de pulsação como pulsos, pescoço e atrás das orelhas. Para maior fixação, hidrate a pele antes da aplicação.</p>
-                )}
+                {activeTab === "descricao" && <p>{product.description ?? "Sem descrição."}</p>}
+                {activeTab === "ingredientes" && <p>Consulte a embalagem para a lista completa de ingredientes.</p>}
+                {activeTab === "modo-uso" && <p>Aplique conforme a indicação na embalagem do produto.</p>}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Related products */}
-        {related.length > 0 && (
+        {related && related.length > 0 && (
           <div className="mt-16">
             <h2 className="text-xl font-bold text-foreground mb-6">Produtos relacionados</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {related.map((p) => (
                 <Link key={p.id} to={`/produto/${p.slug}`} className="group bg-card rounded-lg border border-border overflow-hidden hover:shadow-lg transition-shadow">
-                  <img src={p.image} alt={p.name} className="w-full aspect-square object-cover group-hover:scale-105 transition-transform duration-300" />
+                  <img src={p.image_url ?? "/placeholder.svg"} alt={p.name} className="w-full aspect-square object-cover group-hover:scale-105 transition-transform duration-300" />
                   <div className="p-3">
-                    <p className="text-xs text-muted-foreground uppercase">{p.line}</p>
+                    {p.line && <p className="text-xs text-muted-foreground uppercase">{p.line}</p>}
                     <h3 className="text-sm font-medium line-clamp-2 mb-2">{p.name}</h3>
-                    <span className="text-base font-bold text-primary">{formatPrice(p.price)}</span>
+                    <span className="text-base font-bold text-primary">{formatPrice(Number(p.price))}</span>
                   </div>
                 </Link>
               ))}

@@ -1,41 +1,121 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CreditCard, QrCode, FileText, Check } from "lucide-react";
+import { CreditCard, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
 import Layout from "@/components/Layout";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
-type Step = "identificacao" | "endereco" | "pagamento" | "confirmacao";
+type Step = "identificacao" | "endereco" | "pagamento";
 
 const steps: { key: Step; label: string }[] = [
   { key: "identificacao", label: "Identificação" },
   { key: "endereco", label: "Endereço" },
   { key: "pagamento", label: "Pagamento" },
-  { key: "confirmacao", label: "Confirmação" },
 ];
 
 const Checkout = () => {
   const [currentStep, setCurrentStep] = useState<Step>("identificacao");
-  const [paymentMethod, setPaymentMethod] = useState<"cartao" | "pix" | "boleto">("cartao");
+  const [loading, setLoading] = useState(false);
   const { items, subtotal, clearCart } = useCart();
+  const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+  // Identificação
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [phone, setPhone] = useState("");
+  const [cpf, setCpf] = useState("");
+
+  // Endereço
+  const [cep, setCep] = useState("");
+  const [street, setStreet] = useState("");
+  const [number, setNumber] = useState("");
+  const [complement, setComplement] = useState("");
+  const [neighborhood, setNeighborhood] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+
+  const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
-  const handleFinalize = () => {
+  const handleFinalize = async () => {
+    if (items.length === 0) {
+      toast({ title: "Carrinho vazio", variant: "destructive" });
+      return;
+    }
+    setLoading(true);
+
+    // 1) Cria o pedido como 'pending' no banco
+    const { data: order, error: orderErr } = await supabase
+      .from("orders")
+      .insert({
+        user_id: user?.id ?? null,
+        status: "pending",
+        buyer_name: name,
+        buyer_email: email,
+        buyer_phone: phone,
+        buyer_cpf: cpf,
+        shipping_address: { cep, street, number, complement, neighborhood, city, state },
+        subtotal,
+        shipping: 0,
+        total: subtotal,
+      })
+      .select()
+      .single();
+
+    if (orderErr || !order) {
+      setLoading(false);
+      toast({ title: "Erro ao criar pedido", description: orderErr?.message, variant: "destructive" });
+      return;
+    }
+
+    // 2) Insere os itens do pedido
+    const { error: itemsErr } = await supabase.from("order_items").insert(
+      items.map((it) => ({
+        order_id: order.id,
+        product_id: it.product.id,
+        product_name: it.product.name,
+        product_image: it.product.image_url,
+        unit_price: it.product.price,
+        quantity: it.quantity,
+      }))
+    );
+
+    if (itemsErr) {
+      setLoading(false);
+      toast({ title: "Erro ao salvar itens", description: itemsErr.message, variant: "destructive" });
+      return;
+    }
+
+    // 3) Chama edge function para criar Stripe Checkout Session
+    const { data: checkout, error: fnErr } = await supabase.functions.invoke("create-checkout", {
+      body: { order_id: order.id },
+    });
+
+    setLoading(false);
+
+    if (fnErr || !checkout?.url) {
+      toast({
+        title: "Stripe não configurado ainda",
+        description: "Pedido salvo no banco. Configure as edge functions e a STRIPE_SECRET_KEY para concluir.",
+      });
+      clearCart();
+      navigate("/minha-conta");
+      return;
+    }
+
     clearCart();
-    toast({ title: "Pedido realizado com sucesso! 🎉", description: "Você receberá um e-mail com os detalhes." });
-    navigate("/");
+    window.location.href = checkout.url;
   };
 
   return (
     <Layout>
       <div className="container mx-auto px-4 py-8 max-w-4xl">
-        {/* Step indicators */}
         <div className="flex items-center justify-center gap-2 mb-8">
           {steps.map((s, i) => (
             <div key={s.key} className="flex items-center gap-2">
@@ -49,18 +129,17 @@ const Checkout = () => {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Form */}
           <div className="lg:col-span-2">
             {currentStep === "identificacao" && (
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <h2 className="text-lg font-bold">Dados pessoais</h2>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <div><label className="text-sm text-muted-foreground block mb-1">Nome completo</label><Input placeholder="Seu nome" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">E-mail</label><Input type="email" placeholder="email@exemplo.com" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">CPF</label><Input placeholder="000.000.000-00" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Telefone</label><Input placeholder="(00) 00000-0000" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Nome completo</label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">E-mail</label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@exemplo.com" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">CPF</label><Input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="000.000.000-00" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Telefone</label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(00) 00000-0000" /></div>
                 </div>
-                <Button onClick={() => setCurrentStep("endereco")} className="w-full rounded-lg">Continuar</Button>
+                <Button onClick={() => setCurrentStep("endereco")} disabled={!name || !email} className="w-full rounded-lg">Continuar</Button>
               </div>
             )}
 
@@ -68,79 +147,59 @@ const Checkout = () => {
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <h2 className="text-lg font-bold">Endereço de entrega</h2>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <div><label className="text-sm text-muted-foreground block mb-1">CEP</label><Input placeholder="00000-000" /></div>
-                  <div className="sm:col-span-2"><label className="text-sm text-muted-foreground block mb-1">Rua</label><Input placeholder="Nome da rua" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Número</label><Input placeholder="123" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Complemento</label><Input placeholder="Apto, bloco..." /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Bairro</label><Input placeholder="Bairro" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Cidade</label><Input placeholder="Cidade" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Estado</label><Input placeholder="UF" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">CEP</label><Input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="00000-000" /></div>
+                  <div className="sm:col-span-2"><label className="text-sm text-muted-foreground block mb-1">Rua</label><Input value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Nome da rua" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Número</label><Input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="123" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Complemento</label><Input value={complement} onChange={(e) => setComplement(e.target.value)} placeholder="Apto, bloco..." /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Bairro</label><Input value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} placeholder="Bairro" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Cidade</label><Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Cidade" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Estado</label><Input value={state} onChange={(e) => setState(e.target.value)} placeholder="UF" /></div>
                 </div>
                 <div className="flex gap-3">
                   <Button variant="outline" onClick={() => setCurrentStep("identificacao")} className="flex-1 rounded-lg">Voltar</Button>
-                  <Button onClick={() => setCurrentStep("pagamento")} className="flex-1 rounded-lg">Continuar</Button>
+                  <Button onClick={() => setCurrentStep("pagamento")} disabled={!cep || !street || !number || !city} className="flex-1 rounded-lg">Continuar</Button>
                 </div>
               </div>
             )}
 
             {currentStep === "pagamento" && (
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
-                <h2 className="text-lg font-bold">Forma de pagamento</h2>
-                <div className="grid sm:grid-cols-3 gap-3">
-                  {([
-                    { key: "cartao" as const, icon: CreditCard, label: "Cartão de Crédito" },
-                    { key: "pix" as const, icon: QrCode, label: "Pix" },
-                    { key: "boleto" as const, icon: FileText, label: "Boleto" },
-                  ]).map((m) => (
-                    <button
-                      key={m.key}
-                      onClick={() => setPaymentMethod(m.key)}
-                      className={`border rounded-lg p-4 flex flex-col items-center gap-2 transition-colors ${paymentMethod === m.key ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"}`}
-                    >
-                      <m.icon className={`h-6 w-6 ${paymentMethod === m.key ? "text-primary" : "text-muted-foreground"}`} />
-                      <span className="text-sm font-medium">{m.label}</span>
-                    </button>
-                  ))}
+                <h2 className="text-lg font-bold">Pagamento</h2>
+                <div className="border border-primary bg-primary/5 rounded-lg p-4 flex items-start gap-3">
+                  <CreditCard className="h-5 w-5 text-primary mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-medium mb-1">Pagamento seguro com Stripe</p>
+                    <p className="text-muted-foreground text-xs">
+                      Você será redirecionado para a página segura da Stripe para inserir os dados do cartão. Por motivos de segurança e
+                      conformidade PCI-DSS, nunca armazenamos o número completo do seu cartão. Apenas os últimos 4 dígitos e a bandeira
+                      ficam registrados após o pagamento.
+                    </p>
+                  </div>
                 </div>
 
-                {paymentMethod === "cartao" && (
-                  <div className="space-y-4 pt-4 border-t border-border">
-                    <div><label className="text-sm text-muted-foreground block mb-1">Número do cartão</label><Input placeholder="0000 0000 0000 0000" /></div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div><label className="text-sm text-muted-foreground block mb-1">Validade</label><Input placeholder="MM/AA" /></div>
-                      <div><label className="text-sm text-muted-foreground block mb-1">CVV</label><Input placeholder="000" /></div>
-                    </div>
-                    <div><label className="text-sm text-muted-foreground block mb-1">Nome no cartão</label><Input placeholder="Nome impresso no cartão" /></div>
-                  </div>
-                )}
-                {paymentMethod === "pix" && (
-                  <div className="text-center py-6 border-t border-border">
-                    <QrCode className="h-32 w-32 text-muted-foreground mx-auto mb-3" />
-                    <p className="text-sm text-muted-foreground">O QR Code Pix será gerado após a finalização</p>
-                  </div>
-                )}
-                {paymentMethod === "boleto" && (
-                  <div className="text-center py-6 border-t border-border">
-                    <FileText className="h-16 w-16 text-muted-foreground mx-auto mb-3" />
-                    <p className="text-sm text-muted-foreground">O boleto será gerado após a finalização do pedido</p>
-                  </div>
-                )}
+                <div className="text-sm bg-muted/50 rounded-lg p-4">
+                  <p className="font-medium mb-2">Resumo da compra</p>
+                  <p className="text-muted-foreground">Comprador: {name}</p>
+                  <p className="text-muted-foreground">E-mail: {email}</p>
+                  <p className="text-muted-foreground">Entrega: {street}, {number} - {city}/{state}</p>
+                </div>
 
                 <div className="flex gap-3">
                   <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="flex-1 rounded-lg">Voltar</Button>
-                  <Button onClick={handleFinalize} className="flex-1 rounded-lg">Finalizar pedido</Button>
+                  <Button onClick={handleFinalize} disabled={loading} className="flex-1 rounded-lg">
+                    {loading ? "Processando..." : "Pagar com Stripe"}
+                  </Button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Order summary sidebar */}
           <div className="bg-card border border-border rounded-lg p-6 h-fit">
             <h3 className="font-bold mb-4">Resumo do pedido</h3>
             <div className="space-y-3 mb-4">
               {items.map((item) => (
                 <div key={item.product.id} className="flex gap-3">
-                  <img src={item.product.image} alt="" className="w-12 h-12 rounded object-cover" />
+                  <img src={item.product.image_url ?? "/placeholder.svg"} alt="" className="w-12 h-12 rounded object-cover" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs line-clamp-2">{item.product.name}</p>
                     <p className="text-xs text-muted-foreground">Qtd: {item.quantity}</p>
