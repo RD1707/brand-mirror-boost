@@ -35,7 +35,7 @@ const Cart = () => {
             {items.map((item) => (
               <div key={item.product.id} className="flex gap-4 bg-card border border-border rounded-lg p-4">
                 <Link to={`/produto/${item.product.slug}`}>
-                  <img src={item.product.image} alt={item.product.name} className="w-24 h-24 object-cover rounded" />
+                  <img src={item.product.image_url ?? "/placeholder.svg"} alt={item.product.name} className="w-24 h-24 object-cover rounded" />
                 </Link>
                 <div className="flex-1">
                   <Link to={`/produto/${item.product.slug}`} className="text-sm font-medium hover:text-primary">

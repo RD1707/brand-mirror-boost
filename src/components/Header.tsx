@@ -1,9 +1,10 @@
-import { Search, User, ShoppingBag, Menu, MapPin, ChevronDown } from "lucide-react";
+import { Search, User, ShoppingBag, Menu, MapPin, ChevronDown, Shield } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/contexts/CartContext";
+import { useAdmin } from "@/hooks/useAdmin";
 import logoSvg from "@/assets/logo.svg";
 
 const navLinks = [
@@ -23,6 +24,7 @@ const navLinks = [
 const Header = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { totalItems } = useCart();
+  const { isAdmin } = useAdmin();
 
   return (
     <header className="sticky top-0 z-50 bg-card shadow-sm">
@@ -49,6 +51,13 @@ const Header = () => {
             <span>Informar localização</span>
             <ChevronDown className="h-3 w-3" />
           </a>
+          {isAdmin && (
+            <Link to="/admin">
+              <Button variant="ghost" size="sm" className="hidden md:flex items-center gap-1 text-xs text-primary">
+                <Shield className="h-4 w-4" /> Admin
+              </Button>
+            </Link>
+          )}
           <Link to="/login">
             <Button variant="ghost" size="sm" className="hidden md:flex items-center gap-1 text-xs text-foreground/70">
               <User className="h-4 w-4" /> Entrar <ChevronDown className="h-3 w-3" />
