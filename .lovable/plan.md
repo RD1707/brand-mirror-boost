@@ -1,87 +1,78 @@
 
 
-# Plano: Fonte correta + Imagens/textos reais + Páginas internas completas
+# Plano final: Backend Supabase clássico + Admin + Stripe
 
-## 1. Fonte do Boticário
-O site boticario.com.br usa **"Boticario Sans"** (fonte proprietária) com fallback para **"Noto Sans", sans-serif**. Como a fonte proprietária não é pública, usaremos **"Noto Sans"** do Google Fonts (visualmente muito próxima). Trocar a atual "Lato" por "Noto Sans" em `index.css`.
+## Decisões confirmadas
+- **~25 produtos fictícios** (perfumaria/corpo/maquiagem/cabelos) com Unsplash — você troca pelo painel
+- **Supabase clássico** (você conecta seu projeto e cola o SQL no editor)
+- **Stripe BYOK** (sua conta, sua secret key)
+- **Coleta prévia de dados** antes do Stripe: nome, email, endereço, telefone gravados no nosso banco
+- **Dados do cartão:** apenas o que é seguro/legal — últimos 4, bandeira, status, valor, horário, ID Stripe (vêm do webhook após o pagamento)
 
-## 2. Imagens e textos reais do Boticário
-Atualizar `src/data/products.ts`, `banners.ts`, `categories.ts` com:
-- Imagens reais dos produtos via CDN do Boticário (ex: `https://res.cloudinary.com/beleza-na-web/image/upload/...` ou URLs do próprio site)
-- Nomes, preços e descrições reais dos produtos
-- Expandir o `Product` interface com campos: `description`, `rating`, `reviewCount`, `images[]`, `category`, `slug`
+## ⚠️ Importante sobre o cartão
+Mesmo que o cliente "digite no nosso site", o número completo + CVV **nunca** podem ser salvos no banco (PCI-DSS). O fluxo correto e seguro:
+1. Cliente preenche **nome, email, endereço** no nosso checkout → salvamos no banco como pedido `pending`
+2. Cliente clica "Pagar" → vai pro **Stripe Checkout** (Stripe coleta o cartão de forma compliant)
+3. Webhook da Stripe nos devolve: últimos 4, bandeira, status, payment_intent_id → salvamos no nosso pedido
 
-## 3. Novas Páginas a Criar
+## 1. Arquivo `database.sql` (raiz do projeto)
+Schema completo pronto pra colar no SQL Editor do Supabase:
+- Enum `app_role`
+- Tabelas: `categories`, `products`, `profiles`, `user_roles`, `orders`, `order_items`
+- Função `has_role()` SECURITY DEFINER
+- Trigger `handle_new_user` (cria profile no signup)
+- RLS em todas as tabelas (produtos público leitura / admin escreve; orders dono ou admin)
+- Bucket `product-images` (público leitura, admin escreve)
+- Seed de ~25 produtos + 4 categorias
+- Comentário no final ensinando como virar admin manualmente
 
-### 3.1 Página de Produto (`/produto/:slug`)
-- Galeria de imagens com thumbnails
-- Nome, linha, avaliações com estrelas
-- Preço (original riscado + atual), parcelamento
-- Seletor de quantidade
-- Botões "Adicionar à sacola" e "Comprar agora"
-- Descrição, ingredientes, modo de uso em abas/accordion
-- Seção "Produtos relacionados"
+Campos de `orders` (dados do comprador + pagamento seguros):
+`buyer_name, buyer_email, buyer_phone, shipping_address (jsonb), subtotal, shipping, total, status, stripe_session_id, stripe_payment_intent, card_last4, card_brand, paid_at, created_at`
 
-### 3.2 Carrinho (`/carrinho`)
-- Lista de itens com imagem, nome, preço, quantidade editável
-- Botão remover item
-- Resumo: subtotal, frete, total
-- Campo de CEP para calcular frete
-- Campo de cupom de desconto
-- Botão "Finalizar compra"
+## 2. Conexão Supabase
+- Instalar `@supabase/supabase-js`
+- `src/integrations/supabase/client.ts` lendo `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`
+- Vou pedir as duas chaves quando chegar a hora (você cria projeto e me passa)
+- Hook `useAuth` (sessão + onAuthStateChange) e `useAdmin` (checa role)
 
-### 3.3 Checkout (`/checkout`)
-- Steps: Identificação → Endereço → Pagamento → Confirmação
-- Formulário de dados pessoais (nome, CPF, telefone)
-- Formulário de endereço (CEP, rua, número, bairro, cidade, estado)
-- Seleção de forma de pagamento (cartão, Pix, boleto)
-- Resumo do pedido lateral
-- Botão "Finalizar pedido"
+## 3. Frontend integrado ao banco
+- `Index`, `ProductDetail`, `BrandHighlights` puxam produtos via React Query
+- `Login.tsx` → Supabase Auth real (signup/signin)
+- `MyAccount.tsx` → pedidos reais do usuário
+- `Checkout.tsx` → coleta nome/email/telefone/endereço, cria pedido `pending`, chama edge function de checkout
 
-### 3.4 Login/Cadastro (`/login`)
-- Abas "Entrar" e "Criar conta"
-- Login: email + senha + "Esqueci minha senha"
-- Cadastro: nome, email, CPF, telefone, senha
-- Estética com fundo verde Boticário
+## 4. Painel Admin (`/admin`)
+Protegido por role `admin`:
+- **Produtos:** CRUD completo + upload de imagem pro Storage + toggle ativo/estoque
+- **Pedidos:** lista com filtro por status; modal de detalhes mostrando itens, comprador, endereço, últimos 4 dígitos, bandeira, link pra transação Stripe
+- **Categorias:** CRUD básico
 
-### 3.5 Minha Conta (`/minha-conta`)
-- Menu lateral: Meus Dados, Pedidos, Endereços, Favoritos
-- Listagem de pedidos com status
-- Edição de dados pessoais
+## 5. Stripe (Edge Functions Supabase)
+- **`create-checkout`** — recebe order_id, busca pedido, cria Stripe Checkout Session com line_items, retorna URL
+- **`stripe-webhook`** — escuta `checkout.session.completed`, atualiza pedido pra `paid` com last4/brand/payment_intent/paid_at
+- Páginas `/checkout/success` e `/checkout/cancel`
+- Secrets necessárias: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (peço quando for fazer deploy)
 
-## 4. Carrinho Global (Context API)
-- `CartContext` com `addItem`, `removeItem`, `updateQuantity`, `clearCart`
-- Badge no ícone da sacola no Header mostrando quantidade
-- Persistência em `localStorage`
+## 6. Fluxo do cliente (resumo visual)
+```text
+Carrinho → Checkout (preenche dados) → Pedido criado (pending) no Supabase
+   → Redirect Stripe Checkout → Cliente paga
+   → Webhook atualiza pedido (paid + last4 + brand)
+   → /checkout/success
+Admin vê tudo em /admin/pedidos
+```
 
-## 5. Layout compartilhado
-- Criar `Layout.tsx` com TopBar + Header + children + Footer
-- Usar em todas as páginas para consistência
+## 7. Como você vai usar
+1. Aprovar este plano
+2. Criar projeto Supabase → me passar URL + anon key
+3. Copiar `database.sql` e rodar no SQL Editor
+4. Cadastrar-se no site e rodar no SQL Editor:
+   `INSERT INTO user_roles (user_id, role) SELECT id, 'admin' FROM auth.users WHERE email='seu@email.com';`
+5. Criar conta Stripe → me passar `STRIPE_SECRET_KEY`
+6. Deploy das edge functions (Supabase CLI ou dashboard) → configurar webhook na Stripe → me passar `STRIPE_WEBHOOK_SECRET`
 
-## 6. Arquivos a criar/editar
+## 8. Arquivos
+**Novos:** `database.sql`, `src/integrations/supabase/{client,types}.ts`, `src/hooks/{useAuth,useAdmin}.tsx`, `src/pages/Admin.tsx`, `src/pages/admin/{Products,Orders,Categories}.tsx`, `src/pages/{CheckoutSuccess,CheckoutCancel}.tsx`, `src/components/admin/{ProductForm,OrderDetailModal,AdminLayout}.tsx`, `supabase/functions/create-checkout/index.ts`, `supabase/functions/stripe-webhook/index.ts`
 
-| Ação | Arquivo |
-|------|---------|
-| Editar | `src/index.css` — Noto Sans |
-| Editar | `src/data/products.ts` — dados reais, campos extras, slug |
-| Editar | `src/data/banners.ts` — imagens e textos reais |
-| Editar | `src/data/categories.ts` — imagens reais |
-| Criar | `src/contexts/CartContext.tsx` |
-| Criar | `src/components/Layout.tsx` |
-| Criar | `src/pages/ProductDetail.tsx` |
-| Criar | `src/pages/Cart.tsx` |
-| Criar | `src/pages/Checkout.tsx` |
-| Criar | `src/pages/Login.tsx` |
-| Criar | `src/pages/MyAccount.tsx` |
-| Editar | `src/App.tsx` — rotas novas |
-| Editar | `src/components/Header.tsx` — links para /login, /carrinho com badge |
-| Editar | `src/components/ProductGrid.tsx` — link para /produto/:slug |
-| Editar | `src/components/BrandHighlights.tsx` — link para /produto/:slug |
-
-## Detalhes Técnicos
-- Todas as páginas são estáticas (sem backend), dados mockados
-- Checkout simula finalização com toast de confirmação
-- Login é visual apenas (sem autenticação real)
-- Carrinho funciona com Context API + localStorage
-- Navegação via `react-router-dom` `Link` e `useNavigate`
+**Editados:** `App.tsx`, `Index.tsx`, `ProductDetail.tsx`, `Login.tsx`, `MyAccount.tsx`, `Checkout.tsx`, `Header.tsx`, `CartContext.tsx`, `package.json`
 
