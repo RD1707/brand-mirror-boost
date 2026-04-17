@@ -93,7 +93,7 @@ const FakePaymentForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || "Erro ao processar pagamento no servidor simulado.");
+        throw new Error(errorData.message || "Erro ao processar pagamento no servidor.");
       }
 
       // Se a requisição for bem-sucedida no backend simulado
@@ -101,7 +101,7 @@ const FakePaymentForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess
       onSuccess(); // Chama a função de sucesso passada para o componente pai
 
     } catch (error: any) {
-      console.error("Erro no pagamento simulado:", error);
+      console.error("Erro no pagamento:", error);
       setErrorMessage(error.message || "Ocorreu um erro inesperado. Tente novamente.");
       setLoading(false);
     }
@@ -175,7 +175,7 @@ const FakePaymentForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess
 
       <Button type="submit" disabled={!cardNumber || !cardExpiry || !cardCvc || (true /* Em produção, seria !stripe || isProcessing */)} className="w-full rounded-lg text-lg h-12">
         {/* Este botão agora envia os dados para o nosso backend simulado */}
-        {"Processar Pagamento (Simulação)"}
+        {"Processar Pagamento"}
       </Button>
     </form>
   );
@@ -326,7 +326,7 @@ const Checkout = () => {
               <div className="bg-card border border-border rounded-lg p-6 space-y-6 shadow-sm">
                 <div>
                   <h2 className="text-lg font-bold mb-1">Pagamento</h2>
-                  <p className="text-sm text-muted-foreground">Por favor, insira os dados do seu cartão. (Simulação Educacional)</p>
+                  <p className="text-sm text-muted-foreground">Por favor, insira os dados do seu cartão.</p>
                 </div>
 
                 {/* Aqui entra o formulário de pagamento FALSO */}
@@ -349,7 +349,7 @@ const Checkout = () => {
             {/* Mensagem de sucesso */}
             {paymentSuccess && (
               <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative text-center" role="alert">
-                <strong className="font-bold">Pagamento Realizado com Sucesso (Simulação)!</strong>
+                <strong className="font-bold">Pagamento Realizado com Sucesso!</strong>
                 <p className="block sm:inline">Você será redirecionado para a página de confirmação em breve.</p>
               </div>
             )}
