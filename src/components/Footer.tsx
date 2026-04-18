@@ -1,38 +1,41 @@
 import { Instagram, Facebook, Twitter, Youtube } from "lucide-react";
+import { Link } from "react-router-dom";
 import logoSvg from "@/assets/logo.svg";
 
-const footerColumns = {
+type FooterLink = { label: string; to: string };
+
+const footerColumns: Record<string, FooterLink[]> = {
   "Dúvidas": [
-    "Perguntas Frequentes",
-    "Formas de Pagamento",
-    "Frete e Entrega",
-    "Trocas e Devoluções",
-    "Mapa do Site",
+    { label: "Perguntas Frequentes", to: "/info/perguntas-frequentes" },
+    { label: "Formas de Pagamento", to: "/info/formas-de-pagamento" },
+    { label: "Frete e Entrega", to: "/info/frete-e-entrega" },
+    { label: "Trocas e Devoluções", to: "/info/trocas-e-devolucoes" },
+    { label: "Mapa do Site", to: "/info/mapa-do-site" },
   ],
   "Marcas": [
-    "Quem Disse, Berenice?",
-    "Eudora",
-    "Beleza na Web",
-    "Vult",
-    "O.U.i",
-    "Truss",
-    "Dr Jones",
+    { label: "Quem Disse, Berenice?", to: "/info/marca-quem-disse-berenice" },
+    { label: "Eudora", to: "/info/marca-eudora" },
+    { label: "Beleza na Web", to: "/info/marca-beleza-na-web" },
+    { label: "Vult", to: "/info/marca-vult" },
+    { label: "O.U.i", to: "/info/marca-oui" },
+    { label: "Truss", to: "/info/marca-truss" },
+    { label: "Dr Jones", to: "/info/marca-dr-jones" },
   ],
   "Responsabilidade": [
-    "Nossos Projetos",
-    "Nossa História",
-    "Sustentabilidade",
-    "Diversidade",
-    "Relatório Transparente",
+    { label: "Nossos Projetos", to: "/info/nossos-projetos" },
+    { label: "Nossa História", to: "/info/nossa-historia" },
+    { label: "Sustentabilidade", to: "/info/sustentabilidade" },
+    { label: "Diversidade", to: "/info/diversidade" },
+    { label: "Relatório Transparente", to: "/info/relatorio-transparente" },
   ],
   "Links úteis": [
-    "Política de Privacidade",
-    "Proteja-se Contra Fraudes",
-    "Preferências de Cookies",
-    "Código de Defesa do Consumidor",
-    "consumidor.gov",
-    "Termos de Uso",
-    "Alerta Sobre Segurança",
+    { label: "Política de Privacidade", to: "/info/politica-de-privacidade" },
+    { label: "Proteja-se Contra Fraudes", to: "/info/proteja-se-contra-fraudes" },
+    { label: "Preferências de Cookies", to: "/info/preferencias-de-cookies" },
+    { label: "Código de Defesa do Consumidor", to: "/info/codigo-de-defesa-do-consumidor" },
+    { label: "consumidor.gov", to: "/info/consumidor-gov" },
+    { label: "Termos de Uso", to: "/info/termos-de-uso" },
+    { label: "Alerta Sobre Segurança", to: "/info/alerta-sobre-seguranca" },
   ],
 };
 
@@ -42,21 +45,19 @@ const Footer = () => {
   return (
     <footer className="bg-[hsl(40,30%,96%)] text-foreground">
       <div className="container mx-auto px-4 py-10 md:py-14">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-5 gap-6 md:gap-8">
           {Object.entries(footerColumns).map(([title, links]) => (
             <div key={title}>
-              <h4 className="font-bold text-foreground text-sm mb-3">
-                {title}
-              </h4>
+              <h4 className="font-bold text-foreground text-sm mb-3">{title}</h4>
               <ul className="space-y-2">
                 {links.map((link) => (
-                  <li key={link}>
-                    <a
-                      href="#"
+                  <li key={link.label}>
+                    <Link
+                      to={link.to}
                       className="text-xs text-foreground/60 hover:text-primary transition-colors"
                     >
-                      {link}
-                    </a>
+                      {link.label}
+                    </Link>
                   </li>
                 ))}
               </ul>
@@ -64,26 +65,26 @@ const Footer = () => {
           ))}
 
           {/* Social + Brand */}
-          <div>
-            <h4 className="font-bold text-foreground text-sm mb-3">
-              A empresa nas redes
-            </h4>
+          <div className="col-span-2 sm:col-span-2 md:col-span-1">
+            <h4 className="font-bold text-foreground text-sm mb-3">A empresa nas redes</h4>
             <div className="flex gap-3 mb-6">
-              <a href="#" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
+              <a href="#" aria-label="YouTube" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
                 <Youtube className="h-4 w-4" />
               </a>
-              <a href="#" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
+              <a href="#" aria-label="Instagram" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
                 <Instagram className="h-4 w-4" />
               </a>
-              <a href="#" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
+              <a href="#" aria-label="Twitter" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
                 <Twitter className="h-4 w-4" />
               </a>
-              <a href="#" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
+              <a href="#" aria-label="Facebook" className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground/60 hover:text-primary hover:border-primary transition-colors">
                 <Facebook className="h-4 w-4" />
               </a>
             </div>
             <p className="text-xs text-foreground/50">Pode Confiar</p>
-            <p className="text-sm font-bold text-foreground/70">GrupoBoticário</p>
+            <Link to="/grupo-boticario" className="text-sm font-bold text-foreground/70 hover:text-primary">
+              GrupoBoticário
+            </Link>
           </div>
         </div>
 
@@ -100,20 +101,20 @@ const Footer = () => {
               </span>
             ))}
           </div>
-          <p className="text-xs text-foreground/50">
+          <Link to="/info/formas-de-pagamento" className="text-xs text-foreground/50 hover:text-primary">
             Até 10x sem juros no cartão. Confira as regras
-          </p>
+          </Link>
         </div>
 
         {/* Bottom bar */}
         <div className="border-t border-border mt-6 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3">
+          <Link to="/" className="flex items-center gap-3">
             <img src={logoSvg} alt="O Boticário" className="h-5 w-auto opacity-40" />
-          </div>
+          </Link>
           <p className="text-xs text-foreground/40 text-center">
             Os preços da loja online podem variar em relação às lojas físicas.
           </p>
-          <p className="text-xs text-foreground/40">
+          <p className="text-xs text-foreground/40 text-center md:text-right">
             BOTICÁRIO PRODUTOS DE BELEZA LTDA
           </p>
         </div>
