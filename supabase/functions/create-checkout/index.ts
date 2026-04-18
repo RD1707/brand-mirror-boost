@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
-import Stripe from 'https://esm.sh/stripe@14.14.0?target=deno'
+
+// 1. CORREÇÃO AQUI: Usando o prefixo npm: nativo do Supabase
+import Stripe from 'npm:stripe@14.14.0' 
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -39,7 +41,7 @@ serve(async (req) => {
       }
     }
     
-    // Inicialização correta do Stripe no Deno
+    // 2. CORREÇÃO AQUI: Forçando o uso de Fetch HTTP puro em vez do http do Node
     const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') ?? '', {
       apiVersion: '2023-10-16',
       httpClient: Stripe.createFetchHttpClient(),

