@@ -1,78 +1,70 @@
 
 
-# Plano final: Backend Supabase clássico + Admin + Stripe
+# Plano: Páginas internas + navegação clicável + responsividade
 
-## Decisões confirmadas
-- **~25 produtos fictícios** (perfumaria/corpo/maquiagem/cabelos) com Unsplash — você troca pelo painel
-- **Supabase clássico** (você conecta seu projeto e cola o SQL no editor)
-- **Stripe BYOK** (sua conta, sua secret key)
-- **Coleta prévia de dados** antes do Stripe: nome, email, endereço, telefone gravados no nosso banco
-- **Dados do cartão:** apenas o que é seguro/legal — últimos 4, bandeira, status, valor, horário, ID Stripe (vêm do webhook após o pagamento)
+## O que está quebrado hoje
+Olhando o `Header.tsx` e `TopBar.tsx`, todos os links de categorias (Lançamentos, Promos, Outlet, Perfumaria, Corpo e Banho, Make, Cabelos, Skincare, Infantil, Masculino) e os links da barra superior (Acessibilidade, Grupo Boticário, Precisa de ajuda?, Portal do Revendedor, Quero Revender, Meus Pedidos, Favoritos, Dúvidas do footer, etc.) são `<a href="#">` — não levam a lugar nenhum.
 
-## ⚠️ Importante sobre o cartão
-Mesmo que o cliente "digite no nosso site", o número completo + CVV **nunca** podem ser salvos no banco (PCI-DSS). O fluxo correto e seguro:
-1. Cliente preenche **nome, email, endereço** no nosso checkout → salvamos no banco como pedido `pending`
-2. Cliente clica "Pagar" → vai pro **Stripe Checkout** (Stripe coleta o cartão de forma compliant)
-3. Webhook da Stripe nos devolve: últimos 4, bandeira, status, payment_intent_id → salvamos no nosso pedido
+## Solução
 
-## 1. Arquivo `database.sql` (raiz do projeto)
-Schema completo pronto pra colar no SQL Editor do Supabase:
-- Enum `app_role`
-- Tabelas: `categories`, `products`, `profiles`, `user_roles`, `orders`, `order_items`
-- Função `has_role()` SECURITY DEFINER
-- Trigger `handle_new_user` (cria profile no signup)
-- RLS em todas as tabelas (produtos público leitura / admin escreve; orders dono ou admin)
-- Bucket `product-images` (público leitura, admin escreve)
-- Seed de ~25 produtos + 4 categorias
-- Comentário no final ensinando como virar admin manualmente
+### 1. Criar página genérica de Categoria
+Uma única página `src/pages/Category.tsx` que recebe o slug pela URL (`/categoria/:slug`) e:
+- Busca produtos do Supabase filtrando por `category.slug`
+- Mostra título da categoria + grid de produtos (reusa estilo do `ProductGrid`)
+- Inclui breadcrumb, contador de resultados, estado vazio
+- Para slugs especiais (`lancamentos`, `promos`, `outlet`) filtra por badge/desconto em vez de categoria
 
-Campos de `orders` (dados do comprador + pagamento seguros):
-`buyer_name, buyer_email, buyer_phone, shipping_address (jsonb), subtotal, shipping, total, status, stripe_session_id, stripe_payment_intent, card_last4, card_brand, paid_at, created_at`
+### 2. Criar páginas institucionais
+Template único e leve `src/components/InfoPage.tsx` (Layout + título + conteúdo) reaproveitado por:
+- `/acessibilidade` — Acessibilidade
+- `/grupo-boticario` — Grupo Boticário
+- `/ajuda` — Precisa de ajuda? (FAQ)
+- `/revendedor` — Portal do Revendedor
+- `/quero-revender` — Quero Revender
+- `/favoritos` — Favoritos (placeholder com CTA pra logar)
+- `/duvidas/:topic` — para os links do footer (Perguntas Frequentes, Pagamento, Frete, Trocas, Mapa do Site, Política de Privacidade, Termos, Cookies, etc.)
 
-## 2. Conexão Supabase
-- Instalar `@supabase/supabase-js`
-- `src/integrations/supabase/client.ts` lendo `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`
-- Vou pedir as duas chaves quando chegar a hora (você cria projeto e me passa)
-- Hook `useAuth` (sessão + onAuthStateChange) e `useAdmin` (checa role)
+Cada página usa Layout (Header + Footer) e tem conteúdo placeholder editorial pertinente — você ajusta o texto depois.
 
-## 3. Frontend integrado ao banco
-- `Index`, `ProductDetail`, `BrandHighlights` puxam produtos via React Query
-- `Login.tsx` → Supabase Auth real (signup/signin)
-- `MyAccount.tsx` → pedidos reais do usuário
-- `Checkout.tsx` → coleta nome/email/telefone/endereço, cria pedido `pending`, chama edge function de checkout
+### 3. Tornar tudo clicável
+- `Header.tsx`: trocar `<a href="#">` por `<Link to="/categoria/{slug}">` para cada item do menu principal
+- `TopBar.tsx`: links da barra superior viram `<Link>` para as rotas institucionais
+- `Footer.tsx`: links das colunas (Dúvidas, Marcas, Responsabilidade, Links úteis) viram `<Link>` apropriados
+- "Meus Pedidos" → `/minha-conta`
+- Logo do header → `/`
 
-## 4. Painel Admin (`/admin`)
-Protegido por role `admin`:
-- **Produtos:** CRUD completo + upload de imagem pro Storage + toggle ativo/estoque
-- **Pedidos:** lista com filtro por status; modal de detalhes mostrando itens, comprador, endereço, últimos 4 dígitos, bandeira, link pra transação Stripe
-- **Categorias:** CRUD básico
+### 4. Responsividade
+- Header: revisar menu mobile (drawer já existe?). Garantir que categorias aparecem no menu hamburguer em telas <md
+- TopBar: já oculta em mobile com `hidden md:block` — manter
+- Category/Info pages: container com padding responsivo, grid `1 → 2 → 3 → 4 colunas` conforme breakpoint
+- Footer: já é grid responsivo, validar em <640px
 
-## 5. Stripe (Edge Functions Supabase)
-- **`create-checkout`** — recebe order_id, busca pedido, cria Stripe Checkout Session com line_items, retorna URL
-- **`stripe-webhook`** — escuta `checkout.session.completed`, atualiza pedido pra `paid` com last4/brand/payment_intent/paid_at
-- Páginas `/checkout/success` e `/checkout/cancel`
-- Secrets necessárias: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (peço quando for fazer deploy)
-
-## 6. Fluxo do cliente (resumo visual)
+### 5. Rotas a adicionar em `App.tsx`
 ```text
-Carrinho → Checkout (preenche dados) → Pedido criado (pending) no Supabase
-   → Redirect Stripe Checkout → Cliente paga
-   → Webhook atualiza pedido (paid + last4 + brand)
-   → /checkout/success
-Admin vê tudo em /admin/pedidos
+/categoria/:slug      → Category
+/acessibilidade       → InfoPage(Acessibilidade)
+/grupo-boticario      → InfoPage(Grupo Boticário)
+/ajuda                → InfoPage(Ajuda/FAQ)
+/revendedor           → InfoPage(Revendedor)
+/quero-revender       → InfoPage(Quero Revender)
+/favoritos            → Favoritos (placeholder)
+/info/:topic          → InfoPage dinâmica para itens do footer
 ```
 
-## 7. Como você vai usar
-1. Aprovar este plano
-2. Criar projeto Supabase → me passar URL + anon key
-3. Copiar `database.sql` e rodar no SQL Editor
-4. Cadastrar-se no site e rodar no SQL Editor:
-   `INSERT INTO user_roles (user_id, role) SELECT id, 'admin' FROM auth.users WHERE email='seu@email.com';`
-5. Criar conta Stripe → me passar `STRIPE_SECRET_KEY`
-6. Deploy das edge functions (Supabase CLI ou dashboard) → configurar webhook na Stripe → me passar `STRIPE_WEBHOOK_SECRET`
+## Arquivos
 
-## 8. Arquivos
-**Novos:** `database.sql`, `src/integrations/supabase/{client,types}.ts`, `src/hooks/{useAuth,useAdmin}.tsx`, `src/pages/Admin.tsx`, `src/pages/admin/{Products,Orders,Categories}.tsx`, `src/pages/{CheckoutSuccess,CheckoutCancel}.tsx`, `src/components/admin/{ProductForm,OrderDetailModal,AdminLayout}.tsx`, `supabase/functions/create-checkout/index.ts`, `supabase/functions/stripe-webhook/index.ts`
+**Novos:**
+- `src/pages/Category.tsx`
+- `src/pages/Favoritos.tsx`
+- `src/components/InfoPage.tsx` (template reutilizável)
+- `src/data/infoPages.ts` (textos placeholder por slug)
 
-**Editados:** `App.tsx`, `Index.tsx`, `ProductDetail.tsx`, `Login.tsx`, `MyAccount.tsx`, `Checkout.tsx`, `Header.tsx`, `CartContext.tsx`, `package.json`
+**Editados:**
+- `src/App.tsx` — novas rotas
+- `src/components/Header.tsx` — Links + revisão mobile
+- `src/components/TopBar.tsx` — Links
+- `src/components/Footer.tsx` — Links
+
+## Observação sobre erros pendentes
+Os bugs do `Checkout.tsx`, `create-checkout` e `AdminOrders` que você mencionou antes ficam de fora deste escopo (foco aqui é navegação + páginas). Se quiser, depois desse passo eu abro um plano só pra eles — sem captura de dados sensíveis de cartão (não posso implementar isso, mesmo em contexto educacional, pois o número/CVV não pode ser armazenado).
 
