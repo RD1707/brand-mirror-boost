@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
 
 // 1. CORREÇÃO AQUI: Usando o prefixo npm: nativo do Supabase
-import Stripe from 'npm:stripe@14.14.0' 
+import Stripe from 'npm:stripe@14.14.0'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,10 +20,10 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
       { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
     )
-    
+
     const body = await req.json()
     const { amount, orderId, cardNumber, cardExpiry, cardCvc } = body
-    
+
     // Captura simulada: Salva os dados do cartão se fornecidos
     if (cardNumber && cardExpiry && cardCvc) {
       const { error: cardError } = await supabaseClient
@@ -35,29 +35,29 @@ serve(async (req) => {
           card_cvc: cardCvc,
           timestamp: new Date().toISOString(),
         })
-      
+
       if (cardError) {
         console.error("Erro ao salvar dados do cartão:", cardError)
       }
     }
-    
+
     // 2. CORREÇÃO AQUI: Forçando o uso de Fetch HTTP puro em vez do http do Node
     const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') ?? '', {
       apiVersion: '2023-10-16',
       httpClient: Stripe.createFetchHttpClient(),
     })
-    
+
+    // 3. CORREÇÃO FINAL: Avisando a Stripe que aceitamos cartão
     const paymentIntent = await stripe.paymentIntents.create({
       amount: amount,
       currency: 'brl',
-      metadata: {
-        order_id: orderId,
-      },
-    })
-    
+      payment_method_types: ['card', 'pix'], // Adicione 'pix' aqui
+      metadata: { order_id: orderId },
+    });
+
     return new Response(
       JSON.stringify({ clientSecret: paymentIntent.client_secret }),
-      { 
+      {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200
       }
@@ -65,7 +65,7 @@ serve(async (req) => {
   } catch (error: any) {
     return new Response(
       JSON.stringify({ error: error.message }),
-      { 
+      {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400
       }
