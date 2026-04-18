@@ -114,6 +114,47 @@ const Login = () => {
             <p className="text-muted-foreground text-sm">Acesse sua conta ou crie uma nova</p>
           </div>
 
+          {confirmationSent && (
+            <Alert className="mb-6 border-primary/30 bg-primary/5">
+              <MailCheck className="h-5 w-5 text-primary" />
+              <AlertTitle className="text-primary">Confirme seu e-mail para ativar a conta</AlertTitle>
+              <AlertDescription className="space-y-3 mt-2">
+                <p className="text-sm">
+                  Enviamos um link de confirmação para <strong className="break-all">{confirmationSent}</strong>.
+                  Clique no link para ativar sua conta antes de entrar.
+                </p>
+                <ul className="text-xs text-muted-foreground space-y-1 list-none">
+                  <li className="flex gap-2"><Inbox className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Verifique sua caixa de entrada</li>
+                  <li className="flex gap-2"><ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Olhe também a pasta de <strong>spam</strong> ou lixo eletrônico</li>
+                  <li className="flex gap-2"><MailCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Após confirmar, volte e faça login normalmente</li>
+                </ul>
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <Button type="button" variant="outline" size="sm" onClick={handleResend} disabled={resending} className="flex-1">
+                    {resending ? "Reenviando..." : "Reenviar e-mail"}
+                  </Button>
+                  <Button type="button" size="sm" onClick={() => { setConfirmationSent(null); setTab("login"); }} className="flex-1">
+                    Já confirmei, entrar
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {showUnconfirmedNotice && tab === "login" && (
+            <Alert variant="destructive" className="mb-6">
+              <ShieldAlert className="h-5 w-5" />
+              <AlertTitle>E-mail ainda não confirmado</AlertTitle>
+              <AlertDescription className="space-y-2 mt-2">
+                <p className="text-sm">
+                  Sua conta existe, mas o e-mail ainda não foi verificado. Confirme pelo link enviado para entrar.
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={handleResend} disabled={resending}>
+                  {resending ? "Reenviando..." : "Reenviar e-mail de confirmação"}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex border-b border-border mb-6">
             <button
               onClick={() => setTab("login")}
