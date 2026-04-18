@@ -32,9 +32,20 @@ const Login = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setShowUnconfirmedNotice(false);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes("confirm") || msg.includes("not confirmed") || msg.includes("email not")) {
+        setShowUnconfirmedNotice(true);
+        toast({
+          title: "E-mail ainda não confirmado",
+          description: "Confirme o e-mail enviado para a sua caixa de entrada antes de entrar.",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({ title: "Erro ao entrar", description: error.message, variant: "destructive" });
       return;
     }
@@ -45,7 +56,7 @@ const Login = () => {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -58,8 +69,40 @@ const Login = () => {
       toast({ title: "Erro ao cadastrar", description: error.message, variant: "destructive" });
       return;
     }
-    toast({ title: "Conta criada!", description: "Você já pode entrar." });
-    setTab("login");
+    // Se identities está vazio, significa que o e-mail já existe
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      toast({
+        title: "E-mail já cadastrado",
+        description: "Este e-mail já possui uma conta. Tente entrar ou recuperar a senha.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setConfirmationSent(email);
+    toast({
+      title: "Confirme seu e-mail",
+      description: "Enviamos um link de confirmação para o seu e-mail.",
+    });
+  };
+
+  const handleResend = async () => {
+    const target = confirmationSent ?? email;
+    if (!target) {
+      toast({ title: "Informe seu e-mail", description: "Digite o e-mail para reenviarmos a confirmação.", variant: "destructive" });
+      return;
+    }
+    setResending(true);
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: target,
+      options: { emailRedirectTo: `${window.location.origin}/` },
+    });
+    setResending(false);
+    if (error) {
+      toast({ title: "Não foi possível reenviar", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "E-mail reenviado!", description: "Verifique sua caixa de entrada e a pasta de spam." });
   };
 
   return (
