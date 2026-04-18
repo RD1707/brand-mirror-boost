@@ -211,6 +211,10 @@ const Login = () => {
               <Button type="submit" disabled={loading} className="w-full rounded-lg" size="lg">
                 {loading ? "Criando..." : "Criar conta"}
               </Button>
+              <p className="text-xs text-muted-foreground text-center flex items-center justify-center gap-1.5">
+                <MailCheck className="h-3.5 w-3.5" />
+                Você receberá um e-mail para confirmar sua conta.
+              </p>
             </form>
           )}
         </div>
