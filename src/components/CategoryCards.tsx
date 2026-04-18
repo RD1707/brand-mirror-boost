@@ -1,9 +1,11 @@
 import { ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const highlightSections = [
   {
     id: 1,
     title: "Em alta",
+    slug: "lancamentos",
     products: [
       { image: "https://images.unsplash.com/photo-1541643600914-78b084683601?w=120&h=120&fit=crop", discount: "-29%" },
       { image: "https://images.unsplash.com/photo-1588405748880-12d1d2a59f75?w=120&h=120&fit=crop", discount: "-11%" },
@@ -13,6 +15,7 @@ const highlightSections = [
   {
     id: 2,
     title: "Lançamentos",
+    slug: "lancamentos",
     products: [
       { image: "https://images.unsplash.com/photo-1570194065650-d99fb4ee3313?w=120&h=120&fit=crop", discount: "-18%" },
       { image: "https://images.unsplash.com/photo-1512496015851-a90fb38ba796?w=120&h=120&fit=crop", discount: "-20%" },
@@ -22,6 +25,7 @@ const highlightSections = [
   {
     id: 3,
     title: "Promoções",
+    slug: "promos",
     products: [
       { image: "https://images.unsplash.com/photo-1547887538-e3a2f32cb1cc?w=120&h=120&fit=crop", discount: "-26%" },
       { image: "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?w=120&h=120&fit=crop", discount: "-23%" },
@@ -59,12 +63,12 @@ const CategoryCards = () => {
                   </div>
                 ))}
               </div>
-              <a
-                href="#"
+              <Link
+                to={`/categoria/${section.slug}`}
                 className="flex items-center gap-1 text-primary text-sm font-semibold hover:underline"
               >
                 Ver produtos <ArrowRight className="h-4 w-4" />
-              </a>
+              </Link>
             </div>
           ))}
         </div>
