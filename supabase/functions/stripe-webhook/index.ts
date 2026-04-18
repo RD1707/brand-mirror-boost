@@ -2,15 +2,18 @@
 // IMPORTANTE: configurar 'verify_jwt = false' nesta função (raw body necessário).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
-import Stripe from "https://esm.sh/stripe@14.21.0?target=deno";
+// CORREÇÃO: Usando o import npm nativo
+import Stripe from "npm:stripe@14.21.0";
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
 
+  // CORREÇÃO: Usando o Fetch Client para o Deno não reclamar
   const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, {
     apiVersion: "2024-06-20",
+    httpClient: Stripe.createFetchHttpClient(),
   });
 
   const signature = req.headers.get("stripe-signature");

